@@ -629,7 +629,14 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                     matchingDocs.addAll(getAllDocs(hits, index, concreteIndex, monitor.id, conflictingFields))
                 }
             } catch (e: Exception) {
-                logger.warn("Failed to run for shard $shard. Error: ${e.message}")
+                if (ExceptionsHelper.unwrapCause(e) is IllegalArgumentException &&
+                    e.message?.contains("Limit of total fields [1000] has been exceeded") == true
+                ) {
+                    // Take appropriate action, e.g., log an error or adjust mapping
+                    logger.warn("Monitor [${monitor.id}] can't process index [$index] due to field mapping limit")
+                } else {
+                    logger.warn("Failed to run for shard $shard. Error: ${e.message}")
+                }
             }
         }
         return matchingDocs
@@ -711,9 +718,16 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                 monitorCtx.client!!.execute(SearchAction.INSTANCE, searchRequest, it)
             }
         } catch (e: Exception) {
-            throw IllegalStateException(
-                "Failed to run percolate search for sourceIndex [$index] and queryIndex [$queryIndex] for ${docs.size} document(s)", e
-            )
+            val unwrappedException = ExceptionsHelper.unwrapCause(e) as Exception
+            if (unwrappedException is IllegalArgumentException && unwrappedException.message?.contains("Limit of total fields") == true) {
+                val errorMessage =
+                    "Monitor [${monitorMetadata.monitorId}] can't process index [$queryIndex] due to field mapping limit"
+                throw AlertingException(errorMessage, RestStatus.INTERNAL_SERVER_ERROR, e)
+            } else {
+                throw IllegalStateException(
+                    "Failed to run percolate search for sourceIndex [$index] and queryIndex [$queryIndex] for ${docs.size} document(s)", e
+                )
+            }
         }
 
         if (response.status() !== RestStatus.OK) {
