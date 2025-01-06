@@ -1,4 +1,6 @@
-/*
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
+}/*
  * Copyright OpenSearch Contributors
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -7,9 +9,18 @@ rootProject.name = 'opensearch-alerting'
 include 'alerting'
 include 'core'
 include 'spi'
+include 'monitorRunner'
+include 'metadata'
+include 'dataProvider'
+
 
 project(":core").name = 'alerting-core'
 project(":spi").name = 'alerting-spi'
+project(":monitorRunner").name = 'alerting-monitorRunner'
+project(":metadata").name = 'alerting-metadata'
+project(":dataProvider").name = 'alerting-dataProvider'
 
 include 'sample-remote-monitor-plugin'
 project(":sample-remote-monitor-plugin").name = "alerting-sample-remote-monitor-plugin"
+include 'metadata'
+

@@ -8,7 +8,6 @@ package org.opensearch.alerting.remote.monitors
 import org.apache.logging.log4j.LogManager
 import org.opensearch.ExceptionsHelper
 import org.opensearch.Version
-import org.opensearch.alerting.MonitorMetadataService
 import org.opensearch.alerting.MonitorRunner
 import org.opensearch.alerting.MonitorRunnerExecutionContext
 import org.opensearch.alerting.util.IndexUtils

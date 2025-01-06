@@ -8,10 +8,10 @@ package org.opensearch.alerting
 import org.apache.hc.core5.http.ContentType
 import org.apache.hc.core5.http.io.entity.StringEntity
 import org.opensearch.action.search.SearchResponse
-import org.opensearch.alerting.alerts.AlertIndices.Companion.ALL_ALERT_INDEX_PATTERN
-import org.opensearch.alerting.alerts.AlertIndices.Companion.ALL_FINDING_INDEX_PATTERN
 import org.opensearch.alerting.core.lock.LockService
-import org.opensearch.alerting.settings.AlertingSettings
+import org.opensearch.alerting.dataProvider.alerts.AlertIndices.Companion.ALL_ALERT_INDEX_PATTERN
+import org.opensearch.alerting.dataProvider.alerts.AlertIndices.Companion.ALL_FINDING_INDEX_PATTERN
+import org.opensearch.alerting.dataProvider.settings.AlertingSettings
 import org.opensearch.client.Response
 import org.opensearch.client.ResponseException
 import org.opensearch.common.settings.Settings

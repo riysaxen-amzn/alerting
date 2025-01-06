@@ -27,6 +27,9 @@ import org.opensearch.alerting.core.resthandler.RestScheduledJobStatsHandler
 import org.opensearch.alerting.core.schedule.JobScheduler
 import org.opensearch.alerting.core.settings.LegacyOpenDistroScheduledJobSettings
 import org.opensearch.alerting.core.settings.ScheduledJobSettings
+import org.opensearch.alerting.dataProvider.MonitorMetadataService
+import org.opensearch.alerting.dataProvider.WorkflowMetadataService
+import org.opensearch.alerting.monitorRunner.MonitorRunnerService
 import org.opensearch.alerting.remote.monitors.RemoteMonitorRegistry
 import org.opensearch.alerting.resthandler.RestAcknowledgeAlertAction
 import org.opensearch.alerting.resthandler.RestAcknowledgeChainedAlertAction
@@ -167,7 +170,6 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
         @JvmField val LEGACY_OPENDISTRO_EMAIL_GROUP_BASE_URI = "$LEGACY_OPENDISTRO_DESTINATION_BASE_URI/email_groups"
         @JvmField val FINDING_BASE_URI = "/_plugins/_alerting/findings"
         @JvmField val COMMENTS_BASE_URI = "/_plugins/_alerting/comments"
-
         @JvmField val ALERTING_JOB_TYPES = listOf("monitor", "workflow")
     }
 
