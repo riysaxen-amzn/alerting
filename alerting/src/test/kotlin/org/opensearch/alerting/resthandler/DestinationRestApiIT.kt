@@ -7,14 +7,14 @@ package org.opensearch.alerting.resthandler
 
 import org.junit.Assert
 import org.opensearch.alerting.AlertingRestTestCase
-import org.opensearch.alerting.model.destination.Chime
-import org.opensearch.alerting.model.destination.CustomWebhook
-import org.opensearch.alerting.model.destination.Destination
-import org.opensearch.alerting.model.destination.Slack
-import org.opensearch.alerting.model.destination.email.Email
-import org.opensearch.alerting.model.destination.email.Recipient
+import org.opensearch.alerting.monitorRunner.model.destination.Chime
+import org.opensearch.alerting.monitorRunner.model.destination.CustomWebhook
+import org.opensearch.alerting.monitorRunner.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.model.destination.Slack
+import org.opensearch.alerting.monitorRunner.model.destination.email.Email
+import org.opensearch.alerting.monitorRunner.model.destination.email.Recipient
+import org.opensearch.alerting.monitorRunner.util.DestinationType
 import org.opensearch.alerting.randomUser
-import org.opensearch.alerting.util.DestinationType
 import org.opensearch.test.junit.annotations.TestLogging
 import java.time.Instant
 

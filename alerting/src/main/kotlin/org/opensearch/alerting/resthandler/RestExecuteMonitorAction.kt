@@ -7,8 +7,8 @@ package org.opensearch.alerting.resthandler
 
 import org.apache.logging.log4j.LogManager
 import org.opensearch.alerting.AlertingPlugin
-import org.opensearch.alerting.action.ExecuteMonitorAction
-import org.opensearch.alerting.action.ExecuteMonitorRequest
+import org.opensearch.alerting.monitorRunner.action.ExecuteMonitorAction
+import org.opensearch.alerting.monitorRunner.action.ExecuteMonitorRequest
 import org.opensearch.client.node.NodeClient
 import org.opensearch.common.unit.TimeValue
 import org.opensearch.commons.alerting.model.Monitor

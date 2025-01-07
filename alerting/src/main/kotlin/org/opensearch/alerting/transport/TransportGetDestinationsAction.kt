@@ -10,13 +10,13 @@ import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.search.SearchResponse
 import org.opensearch.action.support.ActionFilters
 import org.opensearch.action.support.HandledTransportAction
-import org.opensearch.alerting.action.GetDestinationsAction
-import org.opensearch.alerting.action.GetDestinationsRequest
-import org.opensearch.alerting.action.GetDestinationsResponse
-import org.opensearch.alerting.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.action.GetDestinationsAction
+import org.opensearch.alerting.monitorRunner.action.GetDestinationsRequest
+import org.opensearch.alerting.monitorRunner.action.GetDestinationsResponse
+import org.opensearch.alerting.monitorRunner.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
+import org.opensearch.alerting.monitorRunner.util.use
 import org.opensearch.alerting.opensearchapi.addFilter
-import org.opensearch.alerting.settings.AlertingSettings
-import org.opensearch.alerting.util.use
 import org.opensearch.client.Client
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.inject.Inject
@@ -51,7 +51,7 @@ class TransportGetDestinationsAction @Inject constructor(
     actionFilters: ActionFilters,
     val settings: Settings,
     val xContentRegistry: NamedXContentRegistry
-) : HandledTransportAction<GetDestinationsRequest, GetDestinationsResponse> (
+) : HandledTransportAction<GetDestinationsRequest, org.opensearch.alerting.monitorRunner.action.GetDestinationsResponse> (
     GetDestinationsAction.NAME, transportService, actionFilters, ::GetDestinationsRequest
 ),
     SecureTransportAction {
@@ -65,7 +65,7 @@ class TransportGetDestinationsAction @Inject constructor(
     override fun doExecute(
         task: Task,
         getDestinationsRequest: GetDestinationsRequest,
-        actionListener: ActionListener<GetDestinationsResponse>
+        actionListener: ActionListener<org.opensearch.alerting.monitorRunner.action.GetDestinationsResponse>
     ) {
         val user = readUserFromThreadContext(client)
         val tableProp = getDestinationsRequest.table
@@ -112,7 +112,7 @@ class TransportGetDestinationsAction @Inject constructor(
 
     fun resolve(
         searchSourceBuilder: SearchSourceBuilder,
-        actionListener: ActionListener<GetDestinationsResponse>,
+        actionListener: ActionListener<org.opensearch.alerting.monitorRunner.action.GetDestinationsResponse>,
         user: User?
     ) {
         if (user == null) {
@@ -155,7 +155,13 @@ class TransportGetDestinationsAction @Inject constructor(
                         XContentParserUtils.ensureExpectedToken(XContentParser.Token.START_OBJECT, xcp.nextToken(), xcp)
                         destinations.add(Destination.parse(xcp, id, version, seqNo, primaryTerm))
                     }
-                    actionListener.onResponse(GetDestinationsResponse(RestStatus.OK, totalDestinationCount, destinations))
+                    actionListener.onResponse(
+                        org.opensearch.alerting.monitorRunner.action.GetDestinationsResponse(
+                            RestStatus.OK,
+                            totalDestinationCount,
+                            destinations
+                        )
+                    )
                 }
 
                 override fun onFailure(t: Exception) {

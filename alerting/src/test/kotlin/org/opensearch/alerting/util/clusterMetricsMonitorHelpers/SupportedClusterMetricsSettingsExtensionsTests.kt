@@ -5,6 +5,7 @@
 
 package org.opensearch.alerting.util.clusterMetricsMonitorHelpers
 
+import org.opensearch.alerting.monitorRunner.util.clusterMetricsMonitorHelpers.redactFieldsFromResponse
 import org.opensearch.test.OpenSearchTestCase
 
 class SupportedClusterMetricsSettingsExtensionsTests : OpenSearchTestCase() {

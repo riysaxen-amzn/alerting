@@ -8,9 +8,10 @@ package org.opensearch.alerting
 import org.junit.Before
 import org.mockito.Mockito
 import org.opensearch.Version
-import org.opensearch.alerting.alerts.AlertIndices
-import org.opensearch.alerting.settings.AlertingSettings
-import org.opensearch.alerting.util.getBucketKeysHash
+import org.opensearch.alerting.monitorRunner.AlertService
+import org.opensearch.alerting.monitorRunner.alerts.AlertIndices
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
+import org.opensearch.alerting.monitorRunner.util.getBucketKeysHash
 import org.opensearch.client.Client
 import org.opensearch.cluster.node.DiscoveryNode
 import org.opensearch.cluster.service.ClusterService

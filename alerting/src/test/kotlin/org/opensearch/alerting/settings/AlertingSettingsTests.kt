@@ -9,6 +9,9 @@ import org.junit.Before
 import org.opensearch.alerting.AlertingPlugin
 import org.opensearch.alerting.core.settings.LegacyOpenDistroScheduledJobSettings
 import org.opensearch.alerting.core.settings.ScheduledJobSettings
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
+import org.opensearch.alerting.monitorRunner.settings.DestinationSettings
+import org.opensearch.alerting.monitorRunner.settings.LegacyOpenDistroAlertingSettings
 import org.opensearch.common.settings.Settings
 import org.opensearch.common.unit.TimeValue
 import org.opensearch.test.OpenSearchTestCase

@@ -14,11 +14,11 @@ import org.opensearch.action.get.GetRequest
 import org.opensearch.action.get.GetResponse
 import org.opensearch.action.support.ActionFilters
 import org.opensearch.action.support.HandledTransportAction
-import org.opensearch.alerting.MonitorRunnerService
-import org.opensearch.alerting.action.ExecuteWorkflowAction
-import org.opensearch.alerting.action.ExecuteWorkflowRequest
-import org.opensearch.alerting.action.ExecuteWorkflowResponse
-import org.opensearch.alerting.util.use
+import org.opensearch.alerting.monitorRunner.MonitorRunnerService
+import org.opensearch.alerting.monitorRunner.action.ExecuteWorkflowAction
+import org.opensearch.alerting.monitorRunner.action.ExecuteWorkflowRequest
+import org.opensearch.alerting.monitorRunner.action.ExecuteWorkflowResponse
+import org.opensearch.alerting.monitorRunner.util.use
 import org.opensearch.client.Client
 import org.opensearch.common.inject.Inject
 import org.opensearch.common.xcontent.LoggingDeprecationHandler
@@ -61,7 +61,7 @@ class TransportExecuteWorkflowAction @Inject constructor(
                 runner.launch {
                     val (periodStart, periodEnd) = if (execWorkflowRequest.requestStart != null) {
                         Pair(
-                            Instant.ofEpochMilli(execWorkflowRequest.requestStart.millis),
+                            Instant.ofEpochMilli(execWorkflowRequest.requestStart!!.millis),
                             Instant.ofEpochMilli(execWorkflowRequest.requestEnd.millis)
                         )
                     } else {

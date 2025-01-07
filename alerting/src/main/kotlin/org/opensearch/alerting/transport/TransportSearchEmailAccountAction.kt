@@ -10,10 +10,10 @@ import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.search.SearchResponse
 import org.opensearch.action.support.ActionFilters
 import org.opensearch.action.support.HandledTransportAction
-import org.opensearch.alerting.action.SearchEmailAccountAction
-import org.opensearch.alerting.settings.DestinationSettings.Companion.ALLOW_LIST
-import org.opensearch.alerting.util.DestinationType
-import org.opensearch.alerting.util.use
+import org.opensearch.alerting.monitorRunner.action.SearchEmailAccountAction
+import org.opensearch.alerting.monitorRunner.settings.DestinationSettings.Companion.ALLOW_LIST
+import org.opensearch.alerting.monitorRunner.util.DestinationType
+import org.opensearch.alerting.monitorRunner.util.use
 import org.opensearch.client.Client
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.inject.Inject

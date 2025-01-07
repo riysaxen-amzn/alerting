@@ -5,7 +5,7 @@
 
 package org.opensearch.alerting.model
 
-import org.opensearch.alerting.model.destination.email.EmailAccount
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailAccount
 import org.opensearch.test.OpenSearchTestCase
 
 class EmailAccountTests : OpenSearchTestCase() {

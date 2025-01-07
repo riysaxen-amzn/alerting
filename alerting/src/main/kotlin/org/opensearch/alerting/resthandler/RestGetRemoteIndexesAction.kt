@@ -7,8 +7,8 @@ package org.opensearch.alerting.resthandler
 
 import org.apache.logging.log4j.LogManager
 import org.opensearch.alerting.AlertingPlugin
-import org.opensearch.alerting.action.GetRemoteIndexesAction
-import org.opensearch.alerting.action.GetRemoteIndexesRequest
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesAction
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesRequest
 import org.opensearch.client.node.NodeClient
 import org.opensearch.core.common.Strings
 import org.opensearch.rest.BaseRestHandler

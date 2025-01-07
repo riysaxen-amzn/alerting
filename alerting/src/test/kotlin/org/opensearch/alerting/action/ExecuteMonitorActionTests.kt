@@ -4,6 +4,7 @@
  */
 package org.opensearch.alerting.action
 
+import org.opensearch.alerting.monitorRunner.action.ExecuteMonitorAction
 import org.opensearch.test.OpenSearchTestCase
 
 class ExecuteMonitorActionTests : OpenSearchTestCase() {

@@ -5,9 +5,9 @@
 
 package org.opensearch.alerting.action
 
-import org.opensearch.alerting.model.destination.Destination
-import org.opensearch.alerting.model.destination.Slack
-import org.opensearch.alerting.util.DestinationType
+import org.opensearch.alerting.monitorRunner.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.model.destination.Slack
+import org.opensearch.alerting.monitorRunner.util.DestinationType
 import org.opensearch.common.io.stream.BytesStreamOutput
 import org.opensearch.core.common.io.stream.StreamInput
 import org.opensearch.core.rest.RestStatus
@@ -18,13 +18,17 @@ import java.util.Collections
 class GetDestinationsResponseTests : OpenSearchTestCase() {
 
     fun `test get destination response with no destinations`() {
-        val req = GetDestinationsResponse(RestStatus.OK, 0, Collections.emptyList())
+        val req = org.opensearch.alerting.monitorRunner.action.GetDestinationsResponse(
+            RestStatus.OK,
+            0,
+            Collections.emptyList()
+        )
         assertNotNull(req)
 
         val out = BytesStreamOutput()
         req.writeTo(out)
         val sin = StreamInput.wrap(out.bytes().toBytesRef().bytes)
-        val newReq = GetDestinationsResponse(sin)
+        val newReq = org.opensearch.alerting.monitorRunner.action.GetDestinationsResponse(sin)
         assertEquals(0, newReq.totalDestinations)
         assertTrue(newReq.destinations.isEmpty())
         assertEquals(RestStatus.OK, newReq.status)
@@ -48,13 +52,14 @@ class GetDestinationsResponseTests : OpenSearchTestCase() {
             null
         )
 
-        val req = GetDestinationsResponse(RestStatus.OK, 1, listOf(destination))
+        val req =
+            org.opensearch.alerting.monitorRunner.action.GetDestinationsResponse(RestStatus.OK, 1, listOf(destination))
         assertNotNull(req)
 
         val out = BytesStreamOutput()
         req.writeTo(out)
         val sin = StreamInput.wrap(out.bytes().toBytesRef().bytes)
-        val newReq = GetDestinationsResponse(sin)
+        val newReq = org.opensearch.alerting.monitorRunner.action.GetDestinationsResponse(sin)
         assertEquals(1, newReq.totalDestinations)
         assertEquals(destination, newReq.destinations[0])
         assertEquals(RestStatus.OK, newReq.status)

@@ -11,8 +11,8 @@ import org.opensearch.action.get.GetRequest
 import org.opensearch.action.get.GetResponse
 import org.opensearch.action.support.ActionFilters
 import org.opensearch.action.support.HandledTransportAction
-import org.opensearch.alerting.settings.AlertingSettings
-import org.opensearch.alerting.util.use
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
+import org.opensearch.alerting.monitorRunner.util.use
 import org.opensearch.client.Client
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.inject.Inject

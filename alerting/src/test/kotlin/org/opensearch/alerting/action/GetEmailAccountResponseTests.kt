@@ -5,6 +5,7 @@
 
 package org.opensearch.alerting.action
 
+import org.opensearch.alerting.monitorRunner.action.GetEmailAccountResponse
 import org.opensearch.alerting.randomEmailAccount
 import org.opensearch.common.io.stream.BytesStreamOutput
 import org.opensearch.core.common.io.stream.StreamInput

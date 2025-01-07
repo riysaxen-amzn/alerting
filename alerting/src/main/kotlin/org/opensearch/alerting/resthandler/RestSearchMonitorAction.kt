@@ -9,9 +9,9 @@ import org.apache.logging.log4j.LogManager
 import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.search.SearchResponse
 import org.opensearch.alerting.AlertingPlugin
-import org.opensearch.alerting.alerts.AlertIndices.Companion.ALL_ALERT_INDEX_PATTERN
-import org.opensearch.alerting.settings.AlertingSettings
-import org.opensearch.alerting.util.context
+import org.opensearch.alerting.monitorRunner.alerts.AlertIndices.Companion.ALL_ALERT_INDEX_PATTERN
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
+import org.opensearch.alerting.monitorRunner.util.context
 import org.opensearch.client.node.NodeClient
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.settings.Settings

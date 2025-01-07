@@ -25,44 +25,44 @@ import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.search.SearchResponse
 import org.opensearch.action.support.ActionFilters
 import org.opensearch.action.support.HandledTransportAction
-import org.opensearch.alerting.AlertService
-import org.opensearch.alerting.MonitorRunnerService
-import org.opensearch.alerting.TriggerService
-import org.opensearch.alerting.action.GetDestinationsAction
-import org.opensearch.alerting.action.GetDestinationsRequest
-import org.opensearch.alerting.action.GetDestinationsResponse
-import org.opensearch.alerting.model.AlertContext
-import org.opensearch.alerting.model.destination.Destination
-import org.opensearch.alerting.model.destination.DestinationContextFactory
+import org.opensearch.alerting.monitorRunner.AlertService
+import org.opensearch.alerting.monitorRunner.MonitorRunnerService
+import org.opensearch.alerting.monitorRunner.TriggerService
+import org.opensearch.alerting.monitorRunner.action.GetDestinationsAction
+import org.opensearch.alerting.monitorRunner.action.GetDestinationsRequest
+import org.opensearch.alerting.monitorRunner.action.GetDestinationsResponse
+import org.opensearch.alerting.monitorRunner.model.AlertContext
+import org.opensearch.alerting.monitorRunner.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.model.destination.DestinationContextFactory
+import org.opensearch.alerting.monitorRunner.script.DocumentLevelTriggerExecutionContext
+import org.opensearch.alerting.monitorRunner.script.QueryLevelTriggerExecutionContext
+import org.opensearch.alerting.monitorRunner.script.TriggerExecutionContext
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.ALERT_BACKOFF_COUNT
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.ALERT_BACKOFF_MILLIS
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.DOC_LEVEL_MONITOR_FETCH_ONLY_QUERY_FIELDS_ENABLED
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.DOC_LEVEL_MONITOR_SHARD_FETCH_SIZE
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.FINDINGS_INDEXING_BATCH_SIZE
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.MAX_ACTIONABLE_ALERT_COUNT
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY
+import org.opensearch.alerting.monitorRunner.settings.DestinationSettings
+import org.opensearch.alerting.monitorRunner.util.defaultToPerExecutionAction
+import org.opensearch.alerting.monitorRunner.util.destinationmigration.NotificationActionConfigs
+import org.opensearch.alerting.monitorRunner.util.destinationmigration.NotificationApiUtils
+import org.opensearch.alerting.monitorRunner.util.destinationmigration.getTitle
+import org.opensearch.alerting.monitorRunner.util.destinationmigration.publishLegacyNotification
+import org.opensearch.alerting.monitorRunner.util.destinationmigration.sendNotification
+import org.opensearch.alerting.monitorRunner.util.getActionExecutionPolicy
+import org.opensearch.alerting.monitorRunner.util.isAllowed
+import org.opensearch.alerting.monitorRunner.util.isTestAction
+import org.opensearch.alerting.monitorRunner.util.parseSampleDocTags
+import org.opensearch.alerting.monitorRunner.util.printsSampleDocData
+import org.opensearch.alerting.monitorRunner.util.use
 import org.opensearch.alerting.opensearchapi.InjectorContextElement
 import org.opensearch.alerting.opensearchapi.convertToMap
 import org.opensearch.alerting.opensearchapi.suspendUntil
 import org.opensearch.alerting.opensearchapi.withClosableContext
-import org.opensearch.alerting.script.DocumentLevelTriggerExecutionContext
-import org.opensearch.alerting.script.QueryLevelTriggerExecutionContext
-import org.opensearch.alerting.script.TriggerExecutionContext
-import org.opensearch.alerting.settings.AlertingSettings
-import org.opensearch.alerting.settings.AlertingSettings.Companion.ALERT_BACKOFF_COUNT
-import org.opensearch.alerting.settings.AlertingSettings.Companion.ALERT_BACKOFF_MILLIS
-import org.opensearch.alerting.settings.AlertingSettings.Companion.DOC_LEVEL_MONITOR_FETCH_ONLY_QUERY_FIELDS_ENABLED
-import org.opensearch.alerting.settings.AlertingSettings.Companion.DOC_LEVEL_MONITOR_SHARD_FETCH_SIZE
-import org.opensearch.alerting.settings.AlertingSettings.Companion.FINDINGS_INDEXING_BATCH_SIZE
-import org.opensearch.alerting.settings.AlertingSettings.Companion.MAX_ACTIONABLE_ALERT_COUNT
-import org.opensearch.alerting.settings.AlertingSettings.Companion.PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT
-import org.opensearch.alerting.settings.AlertingSettings.Companion.PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY
-import org.opensearch.alerting.settings.DestinationSettings
-import org.opensearch.alerting.util.defaultToPerExecutionAction
-import org.opensearch.alerting.util.destinationmigration.NotificationActionConfigs
-import org.opensearch.alerting.util.destinationmigration.NotificationApiUtils
-import org.opensearch.alerting.util.destinationmigration.getTitle
-import org.opensearch.alerting.util.destinationmigration.publishLegacyNotification
-import org.opensearch.alerting.util.destinationmigration.sendNotification
-import org.opensearch.alerting.util.getActionExecutionPolicy
-import org.opensearch.alerting.util.isAllowed
-import org.opensearch.alerting.util.isTestAction
-import org.opensearch.alerting.util.parseSampleDocTags
-import org.opensearch.alerting.util.printsSampleDocData
-import org.opensearch.alerting.util.use
 import org.opensearch.client.Client
 import org.opensearch.client.node.NodeClient
 import org.opensearch.cluster.routing.Preference
@@ -718,7 +718,7 @@ class TransportDocLevelMonitorFanOutAction
 
         if (config.destination?.isAllowed(allowList) == false) {
             throw IllegalStateException(
-                "Monitor contains a Destination type that is not allowed: ${config.destination.type}"
+                "Monitor contains a Destination type that is not allowed: ${config.destination!!.type}"
             )
         }
 
@@ -726,12 +726,12 @@ class TransportDocLevelMonitorFanOutAction
         actionResponseContent = config.channel
             ?.sendNotification(
                 client,
-                config.channel.getTitle(subject),
+                config.channel!!.getTitle(subject),
                 message
             ) ?: actionResponseContent
 
         actionResponseContent = config.destination
-            ?.buildLegacyBaseMessage(subject, message, getDestinationContextFactory().getDestinationContext(config.destination))
+            ?.buildLegacyBaseMessage(subject, message, getDestinationContextFactory().getDestinationContext(config.destination!!))
             ?.publishLegacyNotification(client)
             ?: actionResponseContent
 

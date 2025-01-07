@@ -7,6 +7,8 @@ package org.opensearch.alerting.settings
 
 import org.junit.Before
 import org.opensearch.alerting.AlertingPlugin
+import org.opensearch.alerting.monitorRunner.settings.DestinationSettings
+import org.opensearch.alerting.monitorRunner.settings.LegacyOpenDistroDestinationSettings
 import org.opensearch.common.settings.Settings
 import org.opensearch.test.OpenSearchTestCase
 

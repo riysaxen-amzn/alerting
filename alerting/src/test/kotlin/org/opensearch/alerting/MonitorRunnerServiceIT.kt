@@ -6,13 +6,13 @@
 package org.opensearch.alerting
 
 import org.junit.Assert
-import org.opensearch.alerting.alerts.AlertIndices
-import org.opensearch.alerting.model.destination.CustomWebhook
-import org.opensearch.alerting.model.destination.Destination
-import org.opensearch.alerting.model.destination.email.Email
-import org.opensearch.alerting.model.destination.email.Recipient
-import org.opensearch.alerting.util.DestinationType
-import org.opensearch.alerting.util.getBucketKeysHash
+import org.opensearch.alerting.monitorRunner.alerts.AlertIndices
+import org.opensearch.alerting.monitorRunner.model.destination.CustomWebhook
+import org.opensearch.alerting.monitorRunner.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.model.destination.email.Email
+import org.opensearch.alerting.monitorRunner.model.destination.email.Recipient
+import org.opensearch.alerting.monitorRunner.util.DestinationType
+import org.opensearch.alerting.monitorRunner.util.getBucketKeysHash
 import org.opensearch.client.Request
 import org.opensearch.client.ResponseException
 import org.opensearch.client.WarningFailureException

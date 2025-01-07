@@ -25,12 +25,12 @@ import org.opensearch.action.support.HandledTransportAction
 import org.opensearch.action.support.WriteRequest.RefreshPolicy
 import org.opensearch.alerting.core.lock.LockModel
 import org.opensearch.alerting.core.lock.LockService
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
+import org.opensearch.alerting.monitorRunner.util.ScheduledJobUtils.Companion.WORKFLOW_DELEGATE_PATH
+import org.opensearch.alerting.monitorRunner.util.ScheduledJobUtils.Companion.WORKFLOW_MONITOR_PATH
 import org.opensearch.alerting.opensearchapi.addFilter
 import org.opensearch.alerting.opensearchapi.suspendUntil
 import org.opensearch.alerting.service.DeleteMonitorService
-import org.opensearch.alerting.settings.AlertingSettings
-import org.opensearch.alerting.util.ScheduledJobUtils.Companion.WORKFLOW_DELEGATE_PATH
-import org.opensearch.alerting.util.ScheduledJobUtils.Companion.WORKFLOW_MONITOR_PATH
 import org.opensearch.client.Client
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.inject.Inject

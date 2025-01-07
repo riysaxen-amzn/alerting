@@ -5,15 +5,17 @@
 
 package org.opensearch.alerting.util
 
-import org.opensearch.alerting.model.AlertContext
+import org.opensearch.alerting.monitorRunner.model.AlertContext
+import org.opensearch.alerting.monitorRunner.script.BucketLevelTriggerExecutionContext
+import org.opensearch.alerting.monitorRunner.script.DocumentLevelTriggerExecutionContext
+import org.opensearch.alerting.monitorRunner.util.parseSampleDocTags
+import org.opensearch.alerting.monitorRunner.util.printsSampleDocData
 import org.opensearch.alerting.randomAction
 import org.opensearch.alerting.randomBucketLevelTrigger
 import org.opensearch.alerting.randomChainedAlertTrigger
 import org.opensearch.alerting.randomDocumentLevelTrigger
 import org.opensearch.alerting.randomQueryLevelTrigger
 import org.opensearch.alerting.randomTemplateScript
-import org.opensearch.alerting.script.BucketLevelTriggerExecutionContext
-import org.opensearch.alerting.script.DocumentLevelTriggerExecutionContext
 import org.opensearch.test.OpenSearchTestCase
 
 class AlertingUtilsTests : OpenSearchTestCase() {

@@ -12,8 +12,8 @@ import org.opensearch.alerting.ALERTING_ACK_ALERTS_ROLE
 import org.opensearch.alerting.ALERTING_FULL_ACCESS_ROLE
 import org.opensearch.alerting.ALERTING_READ_ONLY_ACCESS
 import org.opensearch.alerting.AlertingRestTestCase
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.ALERTING_COMMENTS_ENABLED
 import org.opensearch.alerting.randomAlert
-import org.opensearch.alerting.settings.AlertingSettings.Companion.ALERTING_COMMENTS_ENABLED
 import org.opensearch.client.ResponseException
 import org.opensearch.client.RestClient
 import org.opensearch.commons.alerting.model.Alert

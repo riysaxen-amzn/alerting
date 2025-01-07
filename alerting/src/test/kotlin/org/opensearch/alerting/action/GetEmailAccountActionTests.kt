@@ -5,6 +5,7 @@
 
 package org.opensearch.alerting.action
 
+import org.opensearch.alerting.monitorRunner.action.GetEmailAccountAction
 import org.opensearch.test.OpenSearchTestCase
 
 class GetEmailAccountActionTests : OpenSearchTestCase() {

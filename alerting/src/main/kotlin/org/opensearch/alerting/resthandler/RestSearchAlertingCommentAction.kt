@@ -9,8 +9,8 @@ import org.apache.logging.log4j.LogManager
 import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.search.SearchResponse
 import org.opensearch.alerting.AlertingPlugin
-import org.opensearch.alerting.comments.CommentsIndices.Companion.ALL_COMMENTS_INDEX_PATTERN
-import org.opensearch.alerting.util.context
+import org.opensearch.alerting.monitorRunner.comments.CommentsIndices.Companion.ALL_COMMENTS_INDEX_PATTERN
+import org.opensearch.alerting.monitorRunner.util.context
 import org.opensearch.client.node.NodeClient
 import org.opensearch.common.xcontent.LoggingDeprecationHandler
 import org.opensearch.common.xcontent.XContentFactory.jsonBuilder

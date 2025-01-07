@@ -6,7 +6,7 @@
 package org.opensearch.alerting.chainedAlertCondition
 
 import org.junit.Assert
-import org.opensearch.alerting.chainedAlertCondition.parsers.ChainedAlertExpressionParser
+import org.opensearch.alerting.monitorRunner.chainedAlertCondition.parsers.ChainedAlertExpressionParser
 import org.opensearch.test.OpenSearchTestCase
 
 class ChainedAlertsExpressionResolveTests : OpenSearchTestCase() {

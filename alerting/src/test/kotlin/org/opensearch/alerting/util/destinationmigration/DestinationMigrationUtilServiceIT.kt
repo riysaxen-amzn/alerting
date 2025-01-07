@@ -7,14 +7,14 @@ package org.opensearch.alerting.util.destinationmigration
 
 import org.opensearch.alerting.AlertingRestTestCase
 import org.opensearch.alerting.makeRequest
-import org.opensearch.alerting.model.destination.Destination
-import org.opensearch.alerting.model.destination.email.Email
-import org.opensearch.alerting.model.destination.email.EmailAccount
-import org.opensearch.alerting.model.destination.email.EmailEntry
-import org.opensearch.alerting.model.destination.email.EmailGroup
-import org.opensearch.alerting.model.destination.email.Recipient
+import org.opensearch.alerting.monitorRunner.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.model.destination.email.Email
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailAccount
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailEntry
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailGroup
+import org.opensearch.alerting.monitorRunner.model.destination.email.Recipient
+import org.opensearch.alerting.monitorRunner.util.DestinationType
 import org.opensearch.alerting.randomUser
-import org.opensearch.alerting.util.DestinationType
 import org.opensearch.client.ResponseException
 import org.opensearch.commons.alerting.model.ScheduledJob.Companion.SCHEDULED_JOBS_INDEX
 import org.opensearch.core.rest.RestStatus

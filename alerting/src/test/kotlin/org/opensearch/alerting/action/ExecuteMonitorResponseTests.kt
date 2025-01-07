@@ -6,6 +6,7 @@
 package org.opensearch.alerting.action
 
 import org.junit.Assert
+import org.opensearch.alerting.monitorRunner.action.ExecuteMonitorResponse
 import org.opensearch.alerting.randomBucketLevelMonitorRunResult
 import org.opensearch.alerting.randomQueryLevelMonitorRunResult
 import org.opensearch.common.io.stream.BytesStreamOutput

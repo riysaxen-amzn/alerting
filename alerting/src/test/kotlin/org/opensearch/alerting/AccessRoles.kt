@@ -5,7 +5,7 @@
 
 package org.opensearch.alerting
 
-import org.opensearch.alerting.action.ExecuteWorkflowAction
+import org.opensearch.alerting.monitorRunner.action.ExecuteWorkflowAction
 import org.opensearch.commons.alerting.action.AlertingActions
 
 val ALL_ACCESS_ROLE = "all_access"

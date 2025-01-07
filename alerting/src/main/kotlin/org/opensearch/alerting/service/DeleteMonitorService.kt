@@ -21,13 +21,13 @@ import org.opensearch.action.search.SearchResponse
 import org.opensearch.action.support.IndicesOptions
 import org.opensearch.action.support.WriteRequest.RefreshPolicy
 import org.opensearch.action.support.master.AcknowledgedResponse
-import org.opensearch.alerting.MonitorMetadataService
 import org.opensearch.alerting.core.lock.LockModel
 import org.opensearch.alerting.core.lock.LockService
+import org.opensearch.alerting.monitorRunner.MonitorMetadataService
+import org.opensearch.alerting.monitorRunner.util.ScheduledJobUtils.Companion.WORKFLOW_DELEGATE_PATH
+import org.opensearch.alerting.monitorRunner.util.ScheduledJobUtils.Companion.WORKFLOW_MONITOR_PATH
+import org.opensearch.alerting.monitorRunner.util.use
 import org.opensearch.alerting.opensearchapi.suspendUntil
-import org.opensearch.alerting.util.ScheduledJobUtils.Companion.WORKFLOW_DELEGATE_PATH
-import org.opensearch.alerting.util.ScheduledJobUtils.Companion.WORKFLOW_MONITOR_PATH
-import org.opensearch.alerting.util.use
 import org.opensearch.client.Client
 import org.opensearch.commons.alerting.action.DeleteMonitorResponse
 import org.opensearch.commons.alerting.model.Monitor

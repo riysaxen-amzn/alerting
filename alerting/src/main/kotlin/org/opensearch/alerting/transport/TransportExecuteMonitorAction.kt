@@ -16,14 +16,14 @@ import org.opensearch.action.get.GetResponse
 import org.opensearch.action.support.ActionFilters
 import org.opensearch.action.support.HandledTransportAction
 import org.opensearch.action.support.WriteRequest
-import org.opensearch.alerting.MonitorMetadataService
-import org.opensearch.alerting.MonitorRunnerService
-import org.opensearch.alerting.action.ExecuteMonitorAction
-import org.opensearch.alerting.action.ExecuteMonitorRequest
-import org.opensearch.alerting.action.ExecuteMonitorResponse
-import org.opensearch.alerting.settings.AlertingSettings
-import org.opensearch.alerting.util.DocLevelMonitorQueries
-import org.opensearch.alerting.util.use
+import org.opensearch.alerting.monitorRunner.MonitorMetadataService
+import org.opensearch.alerting.monitorRunner.MonitorRunnerService
+import org.opensearch.alerting.monitorRunner.action.ExecuteMonitorAction
+import org.opensearch.alerting.monitorRunner.action.ExecuteMonitorRequest
+import org.opensearch.alerting.monitorRunner.action.ExecuteMonitorResponse
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
+import org.opensearch.alerting.monitorRunner.util.DocLevelMonitorQueries
+import org.opensearch.alerting.monitorRunner.util.use
 import org.opensearch.client.Client
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.inject.Inject
@@ -76,7 +76,7 @@ class TransportExecuteMonitorAction @Inject constructor(
                 runner.launch {
                     val (periodStart, periodEnd) = if (execMonitorRequest.requestStart != null) {
                         Pair(
-                            Instant.ofEpochMilli(execMonitorRequest.requestStart.millis),
+                            Instant.ofEpochMilli(execMonitorRequest.requestStart!!.millis),
                             Instant.ofEpochMilli(execMonitorRequest.requestEnd.millis)
                         )
                     } else {

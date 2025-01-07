@@ -6,7 +6,7 @@
 package org.opensearch.alerting.triggeraction
 
 import org.junit.Assert
-import org.opensearch.alerting.triggercondition.parsers.TriggerExpressionParser
+import org.opensearch.alerting.monitorRunner.triggercondition.parsers.TriggerExpressionParser
 import org.opensearch.test.OpenSearchTestCase
 
 class TriggerExpressionParserTests : OpenSearchTestCase() {

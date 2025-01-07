@@ -5,6 +5,8 @@
 
 package org.opensearch.alerting.action
 
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesAction
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesRequest
 import org.opensearch.test.OpenSearchTestCase
 
 class GetRemoteIndexesActionTests : OpenSearchTestCase() {

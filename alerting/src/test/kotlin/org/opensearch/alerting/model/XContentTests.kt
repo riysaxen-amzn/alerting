@@ -6,8 +6,8 @@
 package org.opensearch.alerting.model
 
 import org.opensearch.alerting.builder
-import org.opensearch.alerting.model.destination.email.EmailAccount
-import org.opensearch.alerting.model.destination.email.EmailGroup
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailAccount
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailGroup
 import org.opensearch.alerting.parser
 import org.opensearch.alerting.randomActionExecutionResult
 import org.opensearch.alerting.randomAlert

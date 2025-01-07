@@ -7,7 +7,7 @@ package org.opensearch.alerting.transport
 
 import org.apache.logging.log4j.LogManager
 import org.opensearch.OpenSearchStatusException
-import org.opensearch.alerting.settings.AlertingSettings
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
 import org.opensearch.client.Client
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.commons.ConfigConstants

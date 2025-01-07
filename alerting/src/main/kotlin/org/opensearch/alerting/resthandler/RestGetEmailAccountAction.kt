@@ -6,9 +6,9 @@
 package org.opensearch.alerting.resthandler
 
 import org.opensearch.alerting.AlertingPlugin
-import org.opensearch.alerting.action.GetEmailAccountAction
-import org.opensearch.alerting.action.GetEmailAccountRequest
-import org.opensearch.alerting.util.context
+import org.opensearch.alerting.monitorRunner.action.GetEmailAccountAction
+import org.opensearch.alerting.monitorRunner.action.GetEmailAccountRequest
+import org.opensearch.alerting.monitorRunner.util.context
 import org.opensearch.client.node.NodeClient
 import org.opensearch.rest.BaseRestHandler
 import org.opensearch.rest.RestHandler.ReplacedRoute

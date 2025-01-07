@@ -7,6 +7,7 @@ package org.opensearch.alerting.util
 
 import org.junit.Assert
 import org.opensearch.action.search.SearchResponse
+import org.opensearch.alerting.monitorRunner.util.AggregationQueryRewriter
 import org.opensearch.alerting.randomBucketLevelTrigger
 import org.opensearch.alerting.randomBucketSelectorExtAggregationBuilder
 import org.opensearch.alerting.randomQueryLevelTrigger

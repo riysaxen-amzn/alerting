@@ -17,11 +17,11 @@ import org.opensearch.alerting.TEST_HR_BACKEND_ROLE
 import org.opensearch.alerting.TEST_HR_INDEX
 import org.opensearch.alerting.TEST_HR_ROLE
 import org.opensearch.alerting.makeRequest
-import org.opensearch.alerting.model.destination.Chime
-import org.opensearch.alerting.model.destination.Destination
-import org.opensearch.alerting.model.destination.Slack
+import org.opensearch.alerting.monitorRunner.model.destination.Chime
+import org.opensearch.alerting.monitorRunner.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.model.destination.Slack
+import org.opensearch.alerting.monitorRunner.util.DestinationType
 import org.opensearch.alerting.randomUser
-import org.opensearch.alerting.util.DestinationType
 import org.opensearch.client.RestClient
 import org.opensearch.commons.rest.SecureRestClientBuilder
 import org.opensearch.core.rest.RestStatus

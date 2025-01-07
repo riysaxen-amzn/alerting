@@ -6,16 +6,16 @@
 package org.opensearch.alerting.transport
 
 import org.opensearch.alerting.AlertingRestTestCase
-import org.opensearch.alerting.action.GetRemoteIndexesRequest.Companion.INCLUDE_MAPPINGS_FIELD
-import org.opensearch.alerting.action.GetRemoteIndexesRequest.Companion.INDEXES_FIELD
-import org.opensearch.alerting.action.GetRemoteIndexesRequest.Companion.INVALID_PATTERN_MESSAGE
-import org.opensearch.alerting.action.GetRemoteIndexesResponse.ClusterIndexes
-import org.opensearch.alerting.action.GetRemoteIndexesResponse.ClusterIndexes.ClusterIndex.Companion.INDEX_HEALTH_FIELD
-import org.opensearch.alerting.action.GetRemoteIndexesResponse.ClusterIndexes.ClusterIndex.Companion.INDEX_NAME_FIELD
-import org.opensearch.alerting.action.GetRemoteIndexesResponse.ClusterIndexes.ClusterIndex.Companion.MAPPINGS_FIELD
 import org.opensearch.alerting.makeRequest
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesRequest.Companion.INCLUDE_MAPPINGS_FIELD
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesRequest.Companion.INDEXES_FIELD
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesRequest.Companion.INVALID_PATTERN_MESSAGE
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesResponse.ClusterIndexes
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesResponse.ClusterIndexes.ClusterIndex.Companion.INDEX_HEALTH_FIELD
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesResponse.ClusterIndexes.ClusterIndex.Companion.INDEX_NAME_FIELD
+import org.opensearch.alerting.monitorRunner.action.GetRemoteIndexesResponse.ClusterIndexes.ClusterIndex.Companion.MAPPINGS_FIELD
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.CROSS_CLUSTER_MONITORING_ENABLED
 import org.opensearch.alerting.resthandler.RestGetRemoteIndexesAction
-import org.opensearch.alerting.settings.AlertingSettings.Companion.CROSS_CLUSTER_MONITORING_ENABLED
 import org.opensearch.client.Response
 import org.opensearch.client.ResponseException
 import org.opensearch.cluster.health.ClusterHealthStatus

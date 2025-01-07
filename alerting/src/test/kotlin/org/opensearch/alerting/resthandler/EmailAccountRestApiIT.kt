@@ -10,7 +10,7 @@ import org.apache.hc.core5.http.io.entity.StringEntity
 import org.opensearch.alerting.AlertingPlugin.Companion.EMAIL_ACCOUNT_BASE_URI
 import org.opensearch.alerting.AlertingRestTestCase
 import org.opensearch.alerting.makeRequest
-import org.opensearch.alerting.model.destination.email.EmailAccount
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailAccount
 import org.opensearch.alerting.randomEmailAccount
 import org.opensearch.client.ResponseException
 import org.opensearch.common.xcontent.XContentType

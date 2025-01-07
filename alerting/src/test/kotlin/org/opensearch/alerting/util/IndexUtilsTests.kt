@@ -5,6 +5,7 @@
 
 package org.opensearch.alerting.util
 
+import org.opensearch.alerting.monitorRunner.util.IndexUtils
 import org.opensearch.alerting.parser
 import org.opensearch.cluster.metadata.IndexMetadata
 import org.opensearch.test.OpenSearchTestCase

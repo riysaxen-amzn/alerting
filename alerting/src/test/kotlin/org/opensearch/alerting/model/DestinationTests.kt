@@ -6,15 +6,15 @@
 package org.opensearch.alerting.model
 
 import org.opensearch.alerting.ADMIN
-import org.opensearch.alerting.model.destination.Chime
-import org.opensearch.alerting.model.destination.CustomWebhook
-import org.opensearch.alerting.model.destination.Destination
-import org.opensearch.alerting.model.destination.Slack
-import org.opensearch.alerting.model.destination.email.Email
-import org.opensearch.alerting.model.destination.email.Recipient
+import org.opensearch.alerting.monitorRunner.model.destination.Chime
+import org.opensearch.alerting.monitorRunner.model.destination.CustomWebhook
+import org.opensearch.alerting.monitorRunner.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.model.destination.Slack
+import org.opensearch.alerting.monitorRunner.model.destination.email.Email
+import org.opensearch.alerting.monitorRunner.model.destination.email.Recipient
+import org.opensearch.alerting.monitorRunner.util.DestinationType
 import org.opensearch.alerting.parser
 import org.opensearch.alerting.randomUser
-import org.opensearch.alerting.util.DestinationType
 import org.opensearch.common.io.stream.BytesStreamOutput
 import org.opensearch.core.common.io.stream.StreamInput
 import org.opensearch.test.OpenSearchTestCase

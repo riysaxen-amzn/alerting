@@ -25,12 +25,12 @@ import org.opensearch.action.fieldcaps.FieldCapabilitiesRequest
 import org.opensearch.action.index.IndexRequest
 import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.support.WriteRequest
-import org.opensearch.alerting.alerts.AlertIndices
 import org.opensearch.alerting.core.ScheduledJobIndices
+import org.opensearch.alerting.monitorRunner.alerts.AlertIndices
+import org.opensearch.alerting.monitorRunner.util.DocLevelMonitorQueries
+import org.opensearch.alerting.monitorRunner.util.DocLevelMonitorQueries.Companion.INDEX_PATTERN_SUFFIX
+import org.opensearch.alerting.monitorRunner.workflow.CompositeWorkflowRunner
 import org.opensearch.alerting.transport.AlertingSingleNodeTestCase
-import org.opensearch.alerting.util.DocLevelMonitorQueries
-import org.opensearch.alerting.util.DocLevelMonitorQueries.Companion.INDEX_PATTERN_SUFFIX
-import org.opensearch.alerting.workflow.CompositeWorkflowRunner
 import org.opensearch.cluster.metadata.IndexMetadata
 import org.opensearch.common.settings.Settings
 import org.opensearch.common.xcontent.LoggingDeprecationHandler

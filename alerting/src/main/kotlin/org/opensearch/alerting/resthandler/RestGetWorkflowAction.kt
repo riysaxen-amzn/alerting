@@ -7,7 +7,7 @@ package org.opensearch.alerting.resthandler
 
 import org.apache.logging.log4j.LogManager
 import org.opensearch.alerting.AlertingPlugin
-import org.opensearch.alerting.util.context
+import org.opensearch.alerting.monitorRunner.util.context
 import org.opensearch.client.node.NodeClient
 import org.opensearch.commons.alerting.action.AlertingActions
 import org.opensearch.commons.alerting.action.GetWorkflowRequest

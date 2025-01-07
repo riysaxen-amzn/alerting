@@ -1,0 +1,102 @@
+/*
+* Copyright OpenSearch Contributors
+* SPDX-License-Identifier: Apache-2.0
+*/
+
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+apply plugin: 'maven-publish'
+apply plugin: 'java'
+apply plugin: 'opensearch.java-rest-test'
+apply plugin: 'org.jetbrains.kotlin.jvm'
+apply plugin: 'jacoco'
+apply plugin: 'com.github.johnrengelman.shadow'
+apply plugin: 'opensearch.repositories'
+
+
+dependencies {
+    api project(":alerting-core")
+    compileOnly "org.opensearch:opensearch:${opensearch_version}"
+    compileOnly "org.jetbrains.kotlin:kotlin-stdlib:${kotlin_version}"
+    compileOnly "org.opensearch:common-utils:${common_utils_version}@jar"
+    compileOnly "com.cronutils:cron-utils:9.1.7"
+//    compileOnly "org.jetbrains.kotlin:kotlin-stdlib:${kotlin_version}"
+    compileOnly 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.1.1'
+    compileOnly "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${kotlin_version}"
+    // OpenSearch Nanny state
+//    implementation "org.jetbrains.kotlin:kotlin-stdlib:${kotlin_version}"
+//    implementation "org.jetbrains.kotlin:kotlin-stdlib-common:${kotlin_version}"
+//    implementation "org.jetbrains:annotations:13.0"
+    implementation project(path: ":alerting-spi", configuration: 'shadow')
+}
+
+shadowJar {
+    archiveClassifier = null
+}
+
+task sourcesJar(type: Jar) {
+    archiveClassifier = 'sources'
+    from sourceSets.main.allJava
+}
+
+task javadocJar(type: Jar) {
+    archiveClassifier = 'javadoc'
+    from javadoc.destinationDir
+}
+
+publishing {
+    repositories {
+        maven {
+            name = 'staging'
+            url = "${rootProject.buildDir}/local-staging-repo"
+        }
+        maven {
+            name = "Snapshots"
+            url = "https://aws.oss.sonatype.org/content/repositories/snapshots"
+            credentials {
+                username "$System.env.SONATYPE_USERNAME"
+                password "$System.env.SONATYPE_PASSWORD"
+            }
+        }
+    }
+    publications {
+        shadow(MavenPublication) {
+            project.shadow.component(it)
+            groupId = 'org.opensearch.alerting'
+            artifactId = 'alerting-monitorRunner'
+
+            artifact sourcesJar
+            artifact javadocJar
+
+            pom {
+                name = "OpenSearch Alerting Monitor Runner"
+                packaging = "jar"
+                url = "https://github.com/opensearch-project/alerting"
+                description = "OpenSearch Alerting Monitor Runner"
+                scm {
+                    connection = "scm:git@github.com:opensearch-project/alerting.git"
+                    developerConnection = "scm:git@github.com:opensearch-project/alerting.git"
+                    url = "git@github.com:opensearch-project/alerting.git"
+                }
+                licenses {
+                    license {
+                        name = "The Apache License, Version 2.0"
+                        url = "http://www.apache.org/licenses/LICENSE-2.0.txt"
+                    }
+                }
+                developers {
+                    developer {
+                        name = "OpenSearch"
+                        url = "https://github.com/opensearch-project/alerting"
+                    }
+                }
+            }
+        }
+    }
+
+    gradle.startParameter.setShowStacktrace(ShowStacktrace.ALWAYS)
+    gradle.startParameter.setLogLevel(LogLevel.DEBUG)
+}

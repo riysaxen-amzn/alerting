@@ -5,6 +5,7 @@
 
 package org.opensearch.alerting.action
 
+import org.opensearch.alerting.monitorRunner.action.ExecuteMonitorRequest
 import org.opensearch.alerting.randomQueryLevelMonitor
 import org.opensearch.common.io.stream.BytesStreamOutput
 import org.opensearch.common.unit.TimeValue

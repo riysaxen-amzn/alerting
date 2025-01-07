@@ -8,11 +8,11 @@ package org.opensearch.alerting
 import junit.framework.TestCase.assertNull
 import org.apache.hc.core5.http.Header
 import org.apache.hc.core5.http.HttpEntity
-import org.opensearch.alerting.model.AlertContext
-import org.opensearch.alerting.model.destination.email.EmailAccount
-import org.opensearch.alerting.model.destination.email.EmailEntry
-import org.opensearch.alerting.model.destination.email.EmailGroup
-import org.opensearch.alerting.util.getBucketKeysHash
+import org.opensearch.alerting.monitorRunner.model.AlertContext
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailAccount
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailEntry
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailGroup
+import org.opensearch.alerting.monitorRunner.util.getBucketKeysHash
 import org.opensearch.client.Request
 import org.opensearch.client.RequestOptions
 import org.opensearch.client.Response
@@ -243,7 +243,6 @@ fun randomDocumentLevelMonitor(
         name = name, monitorType = Monitor.MonitorType.DOC_LEVEL_MONITOR.value, enabled = enabled, inputs = inputs,
         schedule = schedule, triggers = triggers, enabledTime = enabledTime, lastUpdateTime = lastUpdateTime, user = user,
         uiMetadata = if (withMetadata) mapOf("foo" to "bar") else mapOf(),
-        fanoutEnabled = fanoutEnabled
     )
 }
 

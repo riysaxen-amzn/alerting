@@ -8,9 +8,9 @@ package org.opensearch.alerting.resthandler
 import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.search.SearchResponse
 import org.opensearch.alerting.AlertingPlugin
-import org.opensearch.alerting.action.SearchEmailGroupAction
-import org.opensearch.alerting.model.destination.email.EmailGroup
-import org.opensearch.alerting.util.context
+import org.opensearch.alerting.monitorRunner.action.SearchEmailGroupAction
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailGroup
+import org.opensearch.alerting.monitorRunner.util.context
 import org.opensearch.client.node.NodeClient
 import org.opensearch.common.xcontent.LoggingDeprecationHandler
 import org.opensearch.common.xcontent.XContentFactory

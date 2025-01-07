@@ -16,9 +16,9 @@ import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.search.SearchResponse
 import org.opensearch.action.support.ActionFilters
 import org.opensearch.action.support.HandledTransportAction
-import org.opensearch.alerting.comments.CommentsIndices.Companion.ALL_COMMENTS_INDEX_PATTERN
+import org.opensearch.alerting.monitorRunner.comments.CommentsIndices.Companion.ALL_COMMENTS_INDEX_PATTERN
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
 import org.opensearch.alerting.opensearchapi.suspendUntil
-import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.client.Client
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.inject.Inject

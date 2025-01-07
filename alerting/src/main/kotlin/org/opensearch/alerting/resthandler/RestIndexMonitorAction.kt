@@ -7,10 +7,10 @@ package org.opensearch.alerting.resthandler
 import org.apache.logging.log4j.LogManager
 import org.opensearch.action.support.WriteRequest
 import org.opensearch.alerting.AlertingPlugin
-import org.opensearch.alerting.alerts.AlertIndices
-import org.opensearch.alerting.util.IF_PRIMARY_TERM
-import org.opensearch.alerting.util.IF_SEQ_NO
-import org.opensearch.alerting.util.REFRESH
+import org.opensearch.alerting.monitorRunner.alerts.AlertIndices
+import org.opensearch.alerting.monitorRunner.util.IF_PRIMARY_TERM
+import org.opensearch.alerting.monitorRunner.util.IF_SEQ_NO
+import org.opensearch.alerting.monitorRunner.util.REFRESH
 import org.opensearch.client.node.NodeClient
 import org.opensearch.commons.alerting.action.AlertingActions
 import org.opensearch.commons.alerting.action.IndexMonitorRequest

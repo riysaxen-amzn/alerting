@@ -12,11 +12,12 @@ import org.opensearch.alerting.ALWAYS_RUN
 import org.opensearch.alerting.AlertingRestTestCase
 import org.opensearch.alerting.NEVER_RUN
 import org.opensearch.alerting.makeRequest
+import org.opensearch.alerting.monitorRunner.alerts.AlertIndices
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
 import org.opensearch.alerting.randomDocumentLevelMonitor
 import org.opensearch.alerting.randomDocumentLevelTrigger
 import org.opensearch.alerting.randomQueryLevelMonitor
 import org.opensearch.alerting.randomQueryLevelTrigger
-import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.common.xcontent.XContentType
 import org.opensearch.common.xcontent.json.JsonXContent.jsonXContent
 import org.opensearch.commons.alerting.model.DocLevelMonitorInput

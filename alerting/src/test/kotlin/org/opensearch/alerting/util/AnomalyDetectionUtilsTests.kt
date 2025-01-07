@@ -6,6 +6,8 @@
 package org.opensearch.alerting.util
 
 import org.opensearch.alerting.ANOMALY_RESULT_INDEX
+import org.opensearch.alerting.monitorRunner.util.addUserBackendRolesFilter
+import org.opensearch.alerting.monitorRunner.util.isADMonitor
 import org.opensearch.alerting.randomQueryLevelMonitor
 import org.opensearch.commons.alerting.model.Input
 import org.opensearch.commons.alerting.model.SearchInput

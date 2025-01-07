@@ -5,8 +5,8 @@
 
 package org.opensearch.alerting.model
 
-import org.opensearch.alerting.model.destination.email.EmailAccount
-import org.opensearch.alerting.model.destination.email.EmailGroup
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailAccount
+import org.opensearch.alerting.monitorRunner.model.destination.email.EmailGroup
 import org.opensearch.alerting.randomEmailAccount
 import org.opensearch.alerting.randomEmailGroup
 import org.opensearch.common.io.stream.BytesStreamOutput

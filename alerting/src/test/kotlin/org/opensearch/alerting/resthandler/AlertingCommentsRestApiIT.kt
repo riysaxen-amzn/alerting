@@ -6,8 +6,8 @@
 package org.opensearch.alerting.resthandler
 
 import org.opensearch.alerting.AlertingRestTestCase
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings.Companion.ALERTING_COMMENTS_ENABLED
 import org.opensearch.alerting.randomAlert
-import org.opensearch.alerting.settings.AlertingSettings.Companion.ALERTING_COMMENTS_ENABLED
 import org.opensearch.commons.alerting.model.Alert
 import org.opensearch.index.query.QueryBuilders
 import org.opensearch.search.builder.SearchSourceBuilder

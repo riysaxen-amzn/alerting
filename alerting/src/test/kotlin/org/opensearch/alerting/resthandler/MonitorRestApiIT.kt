@@ -13,12 +13,14 @@ import org.opensearch.alerting.ALWAYS_RUN
 import org.opensearch.alerting.ANOMALY_DETECTOR_INDEX
 import org.opensearch.alerting.AlertingRestTestCase
 import org.opensearch.alerting.LEGACY_OPENDISTRO_ALERTING_BASE_URI
-import org.opensearch.alerting.alerts.AlertIndices
 import org.opensearch.alerting.anomalyDetectorIndexMapping
 import org.opensearch.alerting.core.settings.ScheduledJobSettings
 import org.opensearch.alerting.makeRequest
-import org.opensearch.alerting.model.destination.Chime
-import org.opensearch.alerting.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.alerts.AlertIndices
+import org.opensearch.alerting.monitorRunner.model.destination.Chime
+import org.opensearch.alerting.monitorRunner.model.destination.Destination
+import org.opensearch.alerting.monitorRunner.settings.AlertingSettings
+import org.opensearch.alerting.monitorRunner.util.DestinationType
 import org.opensearch.alerting.randomADMonitor
 import org.opensearch.alerting.randomAction
 import org.opensearch.alerting.randomAlert
@@ -34,9 +36,7 @@ import org.opensearch.alerting.randomQueryLevelMonitor
 import org.opensearch.alerting.randomQueryLevelTrigger
 import org.opensearch.alerting.randomThrottle
 import org.opensearch.alerting.randomUser
-import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.alerting.toJsonString
-import org.opensearch.alerting.util.DestinationType
 import org.opensearch.client.ResponseException
 import org.opensearch.client.WarningFailureException
 import org.opensearch.common.unit.TimeValue

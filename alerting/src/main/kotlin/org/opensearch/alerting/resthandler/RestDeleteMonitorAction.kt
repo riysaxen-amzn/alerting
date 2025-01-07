@@ -8,7 +8,7 @@ import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
 import org.opensearch.action.support.WriteRequest.RefreshPolicy
 import org.opensearch.alerting.AlertingPlugin
-import org.opensearch.alerting.util.REFRESH
+import org.opensearch.alerting.monitorRunner.util.REFRESH
 import org.opensearch.client.node.NodeClient
 import org.opensearch.commons.alerting.action.AlertingActions
 import org.opensearch.commons.alerting.action.DeleteMonitorRequest

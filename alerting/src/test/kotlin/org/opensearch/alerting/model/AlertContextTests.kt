@@ -5,6 +5,7 @@
 
 package org.opensearch.alerting.model
 
+import org.opensearch.alerting.monitorRunner.model.AlertContext
 import org.opensearch.alerting.randomAlertContext
 import org.opensearch.alerting.randomDocLevelQuery
 import org.opensearch.alerting.randomFinding
