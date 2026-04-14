@@ -8,7 +8,12 @@ package org.opensearch.alerting.settings
 import org.opensearch.alerting.AlertingPlugin
 import org.opensearch.common.settings.Setting
 import org.opensearch.common.unit.TimeValue
+import org.opensearch.remote.metadata.common.CommonValue.REMOTE_METADATA_ENDPOINT_KEY
+import org.opensearch.remote.metadata.common.CommonValue.REMOTE_METADATA_REGION_KEY
+import org.opensearch.remote.metadata.common.CommonValue.REMOTE_METADATA_SERVICE_NAME_KEY
+import org.opensearch.remote.metadata.common.CommonValue.REMOTE_METADATA_TYPE_KEY
 import java.util.concurrent.TimeUnit
+import java.util.function.Function
 
 /**
  * settings specific to [AlertingPlugin]. These settings include things like history index max age, request timeout, etc...
@@ -18,16 +23,26 @@ class AlertingSettings {
     companion object {
         const val DEFAULT_MAX_ACTIONABLE_ALERT_COUNT = 50L
         const val DEFAULT_FINDINGS_INDEXING_BATCH_SIZE = 1000
+        private const val REMOTE_METADATA_KEY_PREFIX = "plugins.alerting"
         const val DEFAULT_PERCOLATE_QUERY_NUM_DOCS_IN_MEMORY = 50000
         const val DEFAULT_PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT = 10
         const val DEFAULT_DOC_LEVEL_MONITOR_SHARD_FETCH_SIZE = 10000
         const val DEFAULT_MAX_DOC_LEVEL_MONITOR_FANOUT_MAX_DURATION_MINUTES = 3L
         const val DEFAULT_MAX_DOC_LEVEL_MONITOR_EXECUTION_MAX_DURATION_MINUTES = 4L
         const val DEFAULT_FAN_OUT_NODES = 1000
+        const val DEFAULT_MAX_TRIGGERS_PER_MONITOR = 10
 
         val ALERTING_MAX_MONITORS = Setting.intSetting(
             "plugins.alerting.monitor.max_monitors",
             LegacyOpenDistroAlertingSettings.ALERTING_MAX_MONITORS,
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        val MAX_TRIGGERS_PER_MONITOR = Setting.intSetting(
+            "plugins.alerting.monitor.max_triggers",
+            DEFAULT_MAX_TRIGGERS_PER_MONITOR,
+            0,
+            50,
             Setting.Property.NodeScope, Setting.Property.Dynamic
         )
 
@@ -294,112 +309,48 @@ class AlertingSettings {
             Setting.Property.NodeScope, Setting.Property.Dynamic
         )
 
-        val ALERT_V2_HISTORY_ENABLED = Setting.boolSetting(
-            "plugins.alerting.v2.alert_history_enabled",
-            true,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
+        val NOTIFICATION_CONTEXT_RESULTS_ALLOWED_ROLES: Setting<List<String>> = Setting.listSetting(
+            "plugins.alerting.notification_context_results_allowed_roles",
+            listOf(),
+            Function.identity(),
+            Setting.Property.NodeScope,
+            Setting.Property.Dynamic
         )
 
-        val ALERT_V2_HISTORY_ROLLOVER_PERIOD = Setting.positiveTimeSetting(
-            "plugins.alerting.v2.alert_history_rollover_period",
-            TimeValue(12, TimeUnit.HOURS),
-            Setting.Property.NodeScope, Setting.Property.Dynamic
+        val MULTI_TENANCY_ENABLED: Setting<Boolean> = Setting.boolSetting(
+            "$REMOTE_METADATA_KEY_PREFIX.multi_tenancy_enabled",
+            false,
+            Setting.Property.NodeScope,
+            Setting.Property.Final
         )
 
-        val ALERT_V2_HISTORY_INDEX_MAX_AGE = Setting.positiveTimeSetting(
-            "plugins.alerting.v2.alert_history_max_age",
-            TimeValue(30, TimeUnit.DAYS),
-            Setting.Property.NodeScope, Setting.Property.Dynamic
+        val REMOTE_METADATA_STORE_TYPE: Setting<String?> = Setting.simpleString(
+            "$REMOTE_METADATA_KEY_PREFIX.$REMOTE_METADATA_TYPE_KEY",
+            Setting.Property.NodeScope,
+            Setting.Property.Final
         )
 
-        val ALERT_V2_HISTORY_MAX_DOCS = Setting.longSetting(
-            "plugins.alerting.v2.alert_history_max_docs",
-            1000L, 0L,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
+        val REMOTE_METADATA_ENDPOINT: Setting<String?> = Setting.simpleString(
+            "$REMOTE_METADATA_KEY_PREFIX.$REMOTE_METADATA_ENDPOINT_KEY",
+            Setting.Property.NodeScope,
+            Setting.Property.Final
         )
 
-        val ALERT_V2_HISTORY_RETENTION_PERIOD = Setting.positiveTimeSetting(
-            "plugins.alerting.v2.alert_history_retention_period",
-            TimeValue(60, TimeUnit.DAYS),
-            Setting.Property.NodeScope, Setting.Property.Dynamic
+        val REMOTE_METADATA_REGION: Setting<String?> = Setting.simpleString(
+            "$REMOTE_METADATA_KEY_PREFIX.$REMOTE_METADATA_REGION_KEY",
+            Setting.Property.NodeScope,
+            Setting.Property.Final
         )
 
-        val ALERT_V2_MONITOR_EXECUTION_MAX_DURATION = Setting.positiveTimeSetting(
-            "plugins.alerting.v2.alert_monitor_execution_max_duration",
-            TimeValue(4, TimeUnit.MINUTES),
-            Setting.Property.NodeScope, Setting.Property.Dynamic
+        val REMOTE_METADATA_SERVICE_NAME: Setting<String?> = Setting.simpleString(
+            "$REMOTE_METADATA_KEY_PREFIX.$REMOTE_METADATA_SERVICE_NAME_KEY",
+            Setting.Property.NodeScope,
+            Setting.Property.Final
         )
 
-        val ALERTING_V2_MAX_MONITORS = Setting.intSetting(
-            "plugins.alerting.v2.monitor.max_monitors",
-            1000,
-            1,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
-        )
-
-        val ALERTING_V2_MAX_THROTTLE_DURATION = Setting.longSetting(
-            "plugins.alerting.v2.monitor.max_throttle_duration",
-            7200L, // 5 days, 7200 minutes
-            2L,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
-        )
-
-        val ALERTING_V2_MAX_EXPIRE_DURATION = Setting.longSetting(
-            "plugins.alerting.v2.monitor.max_expire_duration",
-            43200L, // 30 days, 43200 minutes
-            2L,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
-        )
-
-        val ALERTING_V2_MAX_LOOK_BACK_WINDOW = Setting.longSetting(
-            "plugins.alerting.v2.monitor.max_look_back_window",
-            10080L, // 7 days, 10080 minutes
-            2L,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
-        )
-
-        val ALERTING_V2_MAX_QUERY_LENGTH = Setting.longSetting(
-            "plugins.alerting.v2.monitor.max_query_length",
-            2000L,
-            0L,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
-        )
-
-        // max data rows to retrieve when executing PPL query against
-        // SQL/PPL plugin during monitor execution
-        val ALERTING_V2_QUERY_RESULTS_MAX_DATAROWS = Setting.longSetting(
-            "plugins.alerting.v2.query_results_max_datarows",
-            10000L,
-            1L,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
-        )
-
-        // max size of query results to store in alerts and notifications
-        val ALERT_V2_QUERY_RESULTS_MAX_SIZE = Setting.longSetting(
-            "plugins.alerting.v2.query_results_max_size",
-            3000L,
-            0L,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
-        )
-
-        val ALERT_V2_PER_RESULT_TRIGGER_MAX_ALERTS = Setting.intSetting(
-            "plugins.alerting.v2.per_result_trigger_max_alerts",
-            10,
-            1,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
-        )
-
-        val NOTIFICATION_SUBJECT_SOURCE_MAX_LENGTH = Setting.intSetting(
-            "plugins.alerting.v2.notification_subject_source_max_length",
-            1000,
-            100,
-            Setting.Property.NodeScope, Setting.Property.Dynamic
-        )
-
-        val NOTIFICATION_MESSAGE_SOURCE_MAX_LENGTH = Setting.intSetting(
-            "plugins.alerting.v2.notification_message_source_max_length",
-            3000,
-            1000,
+        val MULTI_TENANT_TRIGGER_EVAL_ENABLED = Setting.boolSetting(
+            "plugins.alerting.multi_tenant_trigger_eval_enabled",
+            false,
             Setting.Property.NodeScope, Setting.Property.Dynamic
         )
     }

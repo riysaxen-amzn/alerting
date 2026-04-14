@@ -27,7 +27,6 @@ import org.opensearch.action.search.SearchResponse
 import org.opensearch.action.support.ActionFilters
 import org.opensearch.action.support.HandledTransportAction
 import org.opensearch.action.support.clustermanager.AcknowledgedResponse
-import org.opensearch.alerting.AlertingV2Utils.validateMonitorV1
 import org.opensearch.alerting.MonitorMetadataService
 import org.opensearch.alerting.MonitorRunnerService.monitorCtx
 import org.opensearch.alerting.WorkflowMetadataService
@@ -40,6 +39,7 @@ import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.alerting.settings.AlertingSettings.Companion.ALERTING_MAX_MONITORS
 import org.opensearch.alerting.settings.AlertingSettings.Companion.INDEX_TIMEOUT
 import org.opensearch.alerting.settings.AlertingSettings.Companion.MAX_ACTION_THROTTLE_VALUE
+import org.opensearch.alerting.settings.AlertingSettings.Companion.MAX_TRIGGERS_PER_MONITOR
 import org.opensearch.alerting.settings.AlertingSettings.Companion.REQUEST_TIMEOUT
 import org.opensearch.alerting.settings.DestinationSettings.Companion.ALLOW_LIST
 import org.opensearch.alerting.util.IndexUtils
@@ -106,6 +106,9 @@ class TransportIndexWorkflowAction @Inject constructor(
     private var maxMonitors = ALERTING_MAX_MONITORS.get(settings)
 
     @Volatile
+    private var maxTriggersPerMonitor = MAX_TRIGGERS_PER_MONITOR.get(settings)
+
+    @Volatile
     private var requestTimeout = REQUEST_TIMEOUT.get(settings)
 
     @Volatile
@@ -122,6 +125,7 @@ class TransportIndexWorkflowAction @Inject constructor(
 
     init {
         clusterService.clusterSettings.addSettingsUpdateConsumer(ALERTING_MAX_MONITORS) { maxMonitors = it }
+        clusterService.clusterSettings.addSettingsUpdateConsumer(MAX_TRIGGERS_PER_MONITOR) { maxTriggersPerMonitor = it }
         clusterService.clusterSettings.addSettingsUpdateConsumer(REQUEST_TIMEOUT) { requestTimeout = it }
         clusterService.clusterSettings.addSettingsUpdateConsumer(INDEX_TIMEOUT) { indexTimeout = it }
         clusterService.clusterSettings.addSettingsUpdateConsumer(MAX_ACTION_THROTTLE_VALUE) { maxActionThrottle = it }
@@ -179,6 +183,17 @@ class TransportIndexWorkflowAction @Inject constructor(
 
         scope.launch {
             try {
+                val triggerCount = transformedRequest.workflow.triggers.size
+                if (triggerCount > maxTriggersPerMonitor) {
+                    actionListener.onFailure(
+                        AlertingException.wrap(
+                            IllegalArgumentException(
+                                "The current cluster settings only allow up to $maxTriggersPerMonitor triggers per monitor."
+                            )
+                        )
+                    )
+                    return@launch
+                }
                 validateMonitorAccess(
                     transformedRequest,
                     user,
@@ -443,12 +458,7 @@ class TransportIndexWorkflowAction @Inject constructor(
                     xContentRegistry, LoggingDeprecationHandler.INSTANCE,
                     getResponse.sourceAsBytesRef, XContentType.JSON
                 )
-                val scheduledJob = ScheduledJob.parse(xcp, getResponse.id, getResponse.version)
-                validateMonitorV1(scheduledJob)?.let {
-                    actionListener.onFailure(AlertingException.wrap(it))
-                    return
-                }
-                val workflow = scheduledJob as Workflow
+                val workflow = ScheduledJob.parse(xcp, getResponse.id, getResponse.version) as Workflow
                 onGetResponse(workflow)
             } catch (t: Exception) {
                 actionListener.onFailure(AlertingException.wrap(t))
@@ -460,7 +470,7 @@ class TransportIndexWorkflowAction @Inject constructor(
                     user,
                     currentWorkflow.user,
                     actionListener,
-                    "workflow",
+                    "workfklow",
                     request.workflowId
                 )
             ) {
@@ -721,11 +731,7 @@ class TransportIndexWorkflowAction @Inject constructor(
                 xContentRegistry,
                 LoggingDeprecationHandler.INSTANCE, hit.sourceAsString
             ).use { hitsParser ->
-                val scheduledJob = ScheduledJob.parse(hitsParser, hit.id, hit.version)
-                validateMonitorV1(scheduledJob)?.let {
-                    throw OpenSearchException(it)
-                }
-                val monitor = scheduledJob as Monitor
+                val monitor = ScheduledJob.parse(hitsParser, hit.id, hit.version) as Monitor
                 monitors.add(monitor)
             }
         }
