@@ -52,6 +52,7 @@ import org.opensearch.alerting.resthandler.RestSearchEmailAccountAction
 import org.opensearch.alerting.resthandler.RestSearchEmailGroupAction
 import org.opensearch.alerting.resthandler.RestSearchMonitorAction
 import org.opensearch.alerting.script.TriggerScript
+import org.opensearch.alerting.service.AssumeRoleCredentialsCache
 import org.opensearch.alerting.service.DeleteMonitorService
 import org.opensearch.alerting.service.ExternalSchedulerService
 import org.opensearch.alerting.service.MonitorJobPoller
@@ -91,6 +92,7 @@ import org.opensearch.alerting.transport.TransportSearchEmailAccountAction
 import org.opensearch.alerting.transport.TransportSearchEmailGroupAction
 import org.opensearch.alerting.transport.TransportSearchMonitorAction
 import org.opensearch.alerting.util.DocLevelMonitorQueries
+import org.opensearch.alerting.util.MustacheTemplateService
 import org.opensearch.alerting.util.destinationmigration.DestinationMigrationCoordinator
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver
 import org.opensearch.cluster.node.DiscoveryNodes
@@ -110,6 +112,8 @@ import org.opensearch.commons.alerting.model.ClusterMetricsInput
 import org.opensearch.commons.alerting.model.DocLevelMonitorInput
 import org.opensearch.commons.alerting.model.DocumentLevelTrigger
 import org.opensearch.commons.alerting.model.Monitor
+import org.opensearch.commons.alerting.model.PPLInput
+import org.opensearch.commons.alerting.model.PPLTrigger
 import org.opensearch.commons.alerting.model.QueryLevelTrigger
 import org.opensearch.commons.alerting.model.ScheduledJob
 import org.opensearch.commons.alerting.model.ScheduledJob.Companion.SCHEDULED_JOBS_INDEX
@@ -172,6 +176,7 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
         @JvmField val OPEN_SEARCH_DASHBOARDS_USER_AGENT = "OpenSearch-Dashboards"
         @JvmField val UI_METADATA_EXCLUDE = arrayOf("monitor.${Monitor.UI_METADATA_FIELD}")
         @JvmField val TENANT_ID_HEADER = "x-tenant-id"
+        @JvmField val TENANT_ID_METADATA_KEY = "tenant_id"
         @JvmField val MONITOR_BASE_URI = "/_plugins/_alerting/monitors"
         @JvmField val WORKFLOW_BASE_URI = "/_plugins/_alerting/workflows"
         @JvmField val REMOTE_BASE_URI = "/_plugins/_alerting/remote"
@@ -274,12 +279,14 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             Monitor.XCONTENT_REGISTRY,
             SearchInput.XCONTENT_REGISTRY,
             DocLevelMonitorInput.XCONTENT_REGISTRY,
+            PPLInput.XCONTENT_REGISTRY,
             QueryLevelTrigger.XCONTENT_REGISTRY,
             BucketLevelTrigger.XCONTENT_REGISTRY,
             ClusterMetricsInput.XCONTENT_REGISTRY,
             DocumentLevelTrigger.XCONTENT_REGISTRY,
             ChainedAlertTrigger.XCONTENT_REGISTRY,
             RemoteMonitorTrigger.XCONTENT_REGISTRY,
+            PPLTrigger.XCONTENT_REGISTRY,
             Workflow.XCONTENT_REGISTRY
         )
     }
@@ -339,6 +346,7 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             )
             .registerTriggerService(triggerService)
             .registerAlertService(alertService)
+            .registerMustacheTemplateService(MustacheTemplateService(scriptService, settings))
             .registerDocLevelMonitorQueries(DocLevelMonitorQueries(client, clusterService))
             .registerJvmStats(JvmStats.jvmStats())
             .registerWorkflowService(WorkflowService(client, xContentRegistry))
@@ -370,7 +378,7 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             settings
         )
 
-        DeleteMonitorService.initialize(client, lockService)
+        DeleteMonitorService.initialize(client, lockService, sdkClient)
 
         val providerType = AlertingSettings.JOB_QUEUE_ACCOUNT_PROVIDER_TYPE.get(settings)
         val monitorJobPoller = MonitorJobPoller(
@@ -379,10 +387,27 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             MULTI_TENANCY_ENABLED.get(settings),
             if (providerType.isNotEmpty()) JobQueueAccountIdProvider.find(providerType, settings) else null,
             REMOTE_METADATA_REGION.get(settings) ?: "",
-            AlertingSettings.JOB_QUEUE_NAME.get(settings) ?: ""
+            AlertingSettings.JOB_QUEUE_NAME.get(settings) ?: "",
+            AlertingSettings.TARGET_TYPE_TO_SERVICE_NAME.get(settings).let {
+                it.keySet().associateWith { key -> it.get(key) }
+            },
+            AlertingSettings.TENANT_ACCOUNT_ID_HEADER.get(settings) ?: "",
+            AlertingSettings.TENANT_RESOURCE_ID_HEADER.get(settings).let {
+                it.keySet().associateWith { key -> it.get(key) }
+            }
         )
 
         ExternalSchedulerService.initialize(settings)
+        if (AlertingSettings.EXTERNAL_SCHEDULER_ENABLED.get(settings)) {
+            val region = REMOTE_METADATA_REGION.get(settings)
+            val roleName = AlertingSettings.EXTERNAL_SCHEDULER_ROLE_NAME.get(settings)
+            if (!region.isNullOrBlank() && roleName.isNotBlank()) {
+                ExternalSchedulerService.credentialsCache = AssumeRoleCredentialsCache(
+                    region,
+                    "arn:aws:iam::%s:role/$roleName"
+                )
+            }
+        }
 
         return listOf(
             sweeper,
@@ -484,14 +509,25 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             AlertingSettings.REMOTE_METADATA_ENDPOINT,
             AlertingSettings.REMOTE_METADATA_REGION,
             AlertingSettings.REMOTE_METADATA_SERVICE_NAME,
+            AlertingSettings.MAX_PPL_TRIGGERS_PER_MONITOR,
+            AlertingSettings.PPL_QUERY_EXECUTION_MAX_DURATION,
+            AlertingSettings.PPL_MAX_QUERY_LENGTH,
+            AlertingSettings.PPL_QUERY_RESULTS_MAX_DATAROWS,
+            AlertingSettings.PPL_QUERY_RESULTS_MAX_SIZE,
+            AlertingSettings.NOTIFICATION_SUBJECT_SOURCE_MAX_LENGTH,
+            AlertingSettings.NOTIFICATION_MESSAGE_SOURCE_MAX_LENGTH,
             AlertingSettings.MULTI_TENANT_TRIGGER_EVAL_ENABLED,
             AlertingSettings.EXTERNAL_SCHEDULER_ENABLED,
             AlertingSettings.EXTERNAL_SCHEDULER_ACCOUNT_ID,
             AlertingSettings.JOB_QUEUE_NAME,
             AlertingSettings.JOB_QUEUE_MESSAGE_GROUP_KEY_NAME,
-            AlertingSettings.EXTERNAL_SCHEDULER_ROLE_ARN,
+            AlertingSettings.EXTERNAL_SCHEDULER_ROLE_NAME,
+            AlertingSettings.EXTERNAL_SCHEDULER_EXECUTION_ROLE_NAME,
             AlertingSettings.JOB_QUEUE_ACCOUNT_ID,
-            AlertingSettings.JOB_QUEUE_ACCOUNT_PROVIDER_TYPE
+            AlertingSettings.JOB_QUEUE_ACCOUNT_PROVIDER_TYPE,
+            AlertingSettings.TARGET_TYPE_TO_SERVICE_NAME,
+            AlertingSettings.TENANT_ACCOUNT_ID_HEADER,
+            AlertingSettings.TENANT_RESOURCE_ID_HEADER
         )
     }
 

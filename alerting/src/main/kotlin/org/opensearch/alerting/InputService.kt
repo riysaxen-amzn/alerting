@@ -5,17 +5,24 @@
 
 package org.opensearch.alerting
 
+import com.fasterxml.jackson.databind.JsonNode
 import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.apache.logging.log4j.LogManager
 import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.search.SearchResponse
+import org.opensearch.alerting.PPLUtils.appendDataRowsLimit
+import org.opensearch.alerting.PPLUtils.capAndReformatPPLQueryResults
+import org.opensearch.alerting.PPLUtils.executePplQuery
 import org.opensearch.alerting.opensearchapi.convertToMap
 import org.opensearch.alerting.opensearchapi.suspendUntil
 import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.alerting.util.AggregationQueryRewriter
+import org.opensearch.alerting.util.BucketSelectorQueryBuilder
 import org.opensearch.alerting.util.CrossClusterMonitorUtils
 import org.opensearch.alerting.util.IndexUtils
+import org.opensearch.alerting.util.MustacheTemplateService
 import org.opensearch.alerting.util.addUserBackendRolesFilter
 import org.opensearch.alerting.util.clusterMetricsMonitorHelpers.executeTransportAction
 import org.opensearch.alerting.util.clusterMetricsMonitorHelpers.toMap
@@ -30,10 +37,14 @@ import org.opensearch.common.settings.Settings
 import org.opensearch.common.unit.TimeValue
 import org.opensearch.common.xcontent.LoggingDeprecationHandler
 import org.opensearch.common.xcontent.XContentType
+import org.opensearch.commons.alerting.model.BucketLevelTrigger
 import org.opensearch.commons.alerting.model.ClusterMetricsInput
 import org.opensearch.commons.alerting.model.InputRunResults
 import org.opensearch.commons.alerting.model.Monitor
+import org.opensearch.commons.alerting.model.PPLInput
+import org.opensearch.commons.alerting.model.PPLTrigger
 import org.opensearch.commons.alerting.model.SearchInput
+import org.opensearch.commons.alerting.model.Target
 import org.opensearch.commons.alerting.model.TriggerAfterKey
 import org.opensearch.commons.alerting.model.WorkflowRunContext
 import org.opensearch.core.common.io.stream.NamedWriteableAwareStreamInput
@@ -45,14 +56,13 @@ import org.opensearch.index.query.QueryBuilder
 import org.opensearch.index.query.QueryBuilders
 import org.opensearch.index.query.RangeQueryBuilder
 import org.opensearch.index.query.TermsQueryBuilder
-import org.opensearch.script.Script
 import org.opensearch.script.ScriptService
-import org.opensearch.script.ScriptType
-import org.opensearch.script.TemplateScript
 import org.opensearch.search.builder.SearchSourceBuilder
 import org.opensearch.transport.client.Client
+import org.opensearch.transport.client.node.NodeClient
 import java.time.Duration
 import java.time.Instant
+import kotlin.time.measureTimedValue
 
 /** Service that handles the collection of input results for Monitor executions */
 class InputService(
@@ -66,13 +76,15 @@ class InputService(
 ) {
 
     private val logger = LogManager.getLogger(InputService::class.java)
+    private val mustacheTemplateService = MustacheTemplateService(scriptService, settings)
 
     suspend fun collectInputResults(
         monitor: Monitor,
         periodStart: Instant,
         periodEnd: Instant,
         prevResult: InputRunResults? = null,
-        workflowRunContext: WorkflowRunContext? = null
+        workflowRunContext: WorkflowRunContext? = null,
+        useStandardBucketSelector: Boolean = false
     ): InputRunResults {
         return try {
             val results = mutableListOf<Map<String, Any>>()
@@ -93,7 +105,8 @@ class InputService(
                             periodEnd = periodEnd,
                             prevResult = prevResult,
                             matchingDocIdsPerIndex = matchingDocIdsPerIndex,
-                            returnSampleDocs = false
+                            returnSampleDocs = false,
+                            useStandardBucketSelector = useStandardBucketSelector
                         )
                         val searchResponse: SearchResponse = client.suspendUntil { client.search(searchRequest, it) }
                         aggTriggerAfterKey += AggregationQueryRewriter.getAfterKeysFromSearchResponse(
@@ -171,15 +184,7 @@ class InputService(
             val input = monitor.inputs[0] as SearchInput
 
             val searchParams = mapOf("period_start" to periodStart.toEpochMilli(), "period_end" to periodEnd.toEpochMilli())
-            val searchSource = scriptService.compile(
-                Script(
-                    ScriptType.INLINE, Script.DEFAULT_TEMPLATE_LANG,
-                    input.query.toString(), searchParams
-                ),
-                TemplateScript.CONTEXT
-            )
-                .newInstance(searchParams)
-                .execute()
+            val searchSource = mustacheTemplateService.renderTemplate(input.query.toString(), searchParams)
 
             val searchRequest = SearchRequest()
                 .indices(*input.indices.toTypedArray())
@@ -216,6 +221,110 @@ class InputService(
         }
     }
 
+    suspend fun collectInputResultsForPPLMonitor(
+        monitor: Monitor,
+        monitorCtx: MonitorRunnerExecutionContext
+    ): InputRunResults {
+        return try {
+            if (onlyHasCustomTriggers(monitor)) {
+                // PPL Alerting:
+                // this function only runs the base query. this is called at the very
+                // beginning of PPL Monitor execution. if the PPL Monitor only contains
+                // custom triggers (which are each running their own queries), and no
+                // number of results triggers, then the base query does not need to be
+                // run, return early saying there were 0 base query results.
+                return InputRunResults(emptyList(), null, null, listOf(), 0)
+            }
+
+            // PPL Alerting:
+            // these query results are for number_of_results PPL triggers,
+            // only the number of results returned by base query matters
+            // for those triggers, not the contents themselves
+            val basePplQueryResults = runPPLBaseQuery(
+                monitor,
+                (monitor.inputs[0] as PPLInput).query,
+                monitorCtx
+            )
+            val numPplResults = basePplQueryResults.get("total").asLong()
+
+            // PPL Alerting:
+            // PPL Trigger evaluations won't read this input result in.
+            // for num results triggers, this is because the contents of the query results
+            // are unimportant, only the number of results matters.
+            // for custom trigger, this is because it'll be running its own query
+            // (base query + custom condition) and evaluating on those query results.
+            // thus, the size capped and reformatted base query results are included
+            // here to populate the final customer facing response of monitor execution
+            val cappedPPLBaseQueryResults = capAndReformatPPLQueryResults(
+                basePplQueryResults,
+                monitorCtx.clusterService!!.clusterSettings.get(AlertingSettings.PPL_QUERY_RESULTS_MAX_SIZE)
+            )
+
+            InputRunResults(emptyList(), null, null, cappedPPLBaseQueryResults, numPplResults)
+        } catch (e: Exception) {
+            logger.error(
+                "failed to run PPL Monitor base query " +
+                    "from PPL Monitor ${monitor.name} (id: ${monitor.id}",
+                e
+            )
+            InputRunResults(emptyList(), e, null, listOf(), null)
+        }
+    }
+
+    // returns true if the PPL Monitor contains only custom triggers
+    // and no number of results triggers.
+    // note that the PPL Monitor is guaranteed to have at least 1 trigger,
+    // this is validated at Monitor creation time.
+    private fun onlyHasCustomTriggers(pplMonitor: Monitor): Boolean {
+        val triggers = pplMonitor.triggers
+
+        for (trigger in triggers) {
+            val pplTrigger = trigger as PPLTrigger
+            if (pplTrigger.conditionType != PPLTrigger.ConditionType.CUSTOM) {
+                return false
+            }
+        }
+
+        return true
+    }
+
+    // for PPL Monitor execution, the base PPL query is run once
+    // for number_of_results PPL triggers
+    private suspend fun runPPLBaseQuery(
+        pplMonitor: Monitor,
+        baseQuery: String,
+        monitorCtx: MonitorRunnerExecutionContext,
+    ): JsonNode {
+
+        val queryExecutionDuration = monitorCtx
+            .clusterService!!
+            .clusterSettings
+            .get(AlertingSettings.PPL_QUERY_EXECUTION_MAX_DURATION)
+
+        var queryResponseJson: JsonNode? = null
+
+        withTimeout(queryExecutionDuration.millis) {
+            // limit the number of PPL query result data rows returned
+            val dataRowsLimit = monitorCtx.clusterService!!.clusterSettings.get(AlertingSettings.PPL_QUERY_RESULTS_MAX_DATAROWS)
+            val limitedQueryToExecute = appendDataRowsLimit(baseQuery, dataRowsLimit)
+
+            logger.debug("executing the base PPL query of monitor: ${pplMonitor.id}")
+            val (queryResponseJsonReceived, timeTaken) = measureTimedValue {
+                executePplQuery(
+                    limitedQueryToExecute,
+                    false,
+                    monitorCtx.client!! as NodeClient
+                )
+            }
+            logger.debug("base query results: $queryResponseJsonReceived")
+            logger.debug("time taken to execute base query against sql/ppl plugin: $timeTaken")
+
+            queryResponseJson = queryResponseJsonReceived
+        }
+
+        return queryResponseJson!!
+    }
+
     fun getSearchRequest(
         monitor: Monitor,
         searchInput: SearchInput,
@@ -223,7 +332,8 @@ class InputService(
         periodEnd: Instant,
         prevResult: InputRunResults?,
         matchingDocIdsPerIndex: Map<String, List<String>>?,
-        returnSampleDocs: Boolean = false
+        returnSampleDocs: Boolean = false,
+        useStandardBucketSelector: Boolean = false
     ): SearchRequest {
         // TODO: Figure out a way to use SearchTemplateRequest without bringing in the entire TransportClient
         val searchParams = mapOf(
@@ -233,11 +343,22 @@ class InputService(
 
         // Deep copying query before passing it to rewriteQuery since otherwise, the monitor.input is modified directly
         // which causes a strange bug where the rewritten query persists on the Monitor across executions
+        val copiedQuery = deepCopyQuery(searchInput.query)
+
+        // When using standard bucket_selector, inject it as a sub-agg instead of BucketSelectorExt.
+        if (useStandardBucketSelector) {
+            val bucketTriggers = monitor.triggers.filterIsInstance<BucketLevelTrigger>()
+            if (bucketTriggers.isNotEmpty()) {
+                BucketSelectorQueryBuilder.injectBucketSelector(copiedQuery, bucketTriggers)
+            }
+        }
+
         val rewrittenQuery = AggregationQueryRewriter.rewriteQuery(
-            deepCopyQuery(searchInput.query),
+            copiedQuery,
             prevResult,
             monitor.triggers,
-            returnSampleDocs
+            returnSampleDocs,
+            skipBucketSelectorInjection = useStandardBucketSelector
         )
 
         // Rewrite query to consider the doc ids per given index
@@ -246,19 +367,13 @@ class InputService(
             rewrittenQuery.query(updatedSourceQuery)
         }
 
-        val searchSource = scriptService.compile(
-            Script(
-                ScriptType.INLINE, Script.DEFAULT_TEMPLATE_LANG,
-                rewrittenQuery.toString(), searchParams
-            ),
-            TemplateScript.CONTEXT
-        )
-            .newInstance(searchParams)
-            .execute()
+        val searchSource = mustacheTemplateService.renderTemplate(rewrittenQuery.toString(), searchParams)
 
         val indexes = CrossClusterMonitorUtils.parseIndexesForRemoteSearch(searchInput.indices, clusterService)
 
-        val resolvedIndexes = if (searchInput.query.query() == null) indexes else {
+        val isRemoteTarget = monitor.target != null &&
+            monitor.target!!.type != Target.LOCAL
+        val resolvedIndexes = if (searchInput.query.query() == null || isRemoteTarget) indexes else {
             val query = searchInput.query.query()
             resolveOnlyQueryableIndicesFromLocalClusterAliases(
                 monitor,

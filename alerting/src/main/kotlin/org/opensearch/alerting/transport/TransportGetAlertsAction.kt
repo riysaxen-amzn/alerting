@@ -27,10 +27,14 @@ import org.opensearch.commons.alerting.action.AlertingActions
 import org.opensearch.commons.alerting.action.GetAlertsRequest
 import org.opensearch.commons.alerting.action.GetAlertsResponse
 import org.opensearch.commons.alerting.model.Alert
+import org.opensearch.commons.alerting.model.Alert.Companion.MONITOR_NAME_FIELD
+import org.opensearch.commons.alerting.model.Alert.Companion.TRIGGER_NAME_FIELD
 import org.opensearch.commons.alerting.model.Monitor
 import org.opensearch.commons.alerting.model.ScheduledJob
 import org.opensearch.commons.alerting.util.AlertingException
 import org.opensearch.commons.authuser.User
+import org.opensearch.commons.utils.TenantContext
+import org.opensearch.commons.utils.currentTenantId
 import org.opensearch.commons.utils.recreateObject
 import org.opensearch.core.action.ActionListener
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry
@@ -136,8 +140,8 @@ class TransportGetAlertsAction @Inject constructor(
                     QueryBuilders
                         .queryStringQuery(tableProp.searchString)
                         .defaultOperator(Operator.AND)
-                        .field("monitor_name")
-                        .field("trigger_name")
+                        .field(MONITOR_NAME_FIELD)
+                        .field(TRIGGER_NAME_FIELD)
                 )
         }
         val searchSourceBuilder = SearchSourceBuilder()
@@ -148,11 +152,12 @@ class TransportGetAlertsAction @Inject constructor(
             .size(tableProp.size)
             .from(tableProp.startIndex)
 
+        val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
         client.threadPool().threadContext.stashContext().use {
-            scope.launch {
+            scope.launch(TenantContext(tenantId)) {
                 try {
                     val alertIndex = resolveAlertsIndexName(getAlertsRequest)
-                    getAlerts(alertIndex, searchSourceBuilder, actionListener, user)
+                    getAlerts(alertIndex, searchSourceBuilder, actionListener, user, tenantId)
                 } catch (t: Exception) {
                     log.error("Failed to get alerts", t)
                     if (t is AlertingException) {
@@ -202,7 +207,7 @@ class TransportGetAlertsAction @Inject constructor(
     }
 
     private suspend fun getMonitor(getAlertsRequest: GetAlertsRequest): Monitor? {
-        val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
+        val tenantId = currentTenantId()
         val getRequest = GetDataObjectRequest.builder()
             .index(ScheduledJob.SCHEDULED_JOBS_INDEX)
             .id(getAlertsRequest.monitorId!!)
@@ -230,28 +235,33 @@ class TransportGetAlertsAction @Inject constructor(
         searchSourceBuilder: SearchSourceBuilder,
         actionListener: ActionListener<GetAlertsResponse>,
         user: User?,
+        tenantId: String? = null,
     ) {
         // user is null when: 1/ security is disabled. 2/when user is super-admin.
         if (user == null) {
             // user is null when: 1/ security is disabled. 2/when user is super-admin.
-            search(alertIndex, searchSourceBuilder, actionListener)
+            search(alertIndex, searchSourceBuilder, actionListener, tenantId)
         } else if (!doFilterForUser(user)) {
             // security is enabled and filterby is disabled.
-            search(alertIndex, searchSourceBuilder, actionListener)
+            search(alertIndex, searchSourceBuilder, actionListener, tenantId)
         } else {
             // security is enabled and filterby is enabled.
             try {
                 log.info("Filtering result by: ${user.backendRoles}")
                 addFilter(user, searchSourceBuilder, "monitor_user.backend_roles.keyword")
-                search(alertIndex, searchSourceBuilder, actionListener)
+                search(alertIndex, searchSourceBuilder, actionListener, tenantId)
             } catch (ex: IOException) {
                 actionListener.onFailure(AlertingException.wrap(ex))
             }
         }
     }
 
-    fun search(alertIndex: String, searchSourceBuilder: SearchSourceBuilder, actionListener: ActionListener<GetAlertsResponse>) {
-        val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
+    fun search(
+        alertIndex: String,
+        searchSourceBuilder: SearchSourceBuilder,
+        actionListener: ActionListener<GetAlertsResponse>,
+        tenantId: String? = null,
+    ) {
         val sdkSearchRequest = SearchDataObjectRequest.builder()
             .indices(alertIndex)
             .tenantId(tenantId)

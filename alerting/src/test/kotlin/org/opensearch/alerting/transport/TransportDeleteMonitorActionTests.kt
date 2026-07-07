@@ -8,11 +8,13 @@ package org.opensearch.alerting.transport
 import com.carrotsearch.randomizedtesting.ThreadFilter
 import com.carrotsearch.randomizedtesting.annotations.ThreadLeakFilters
 import org.junit.Before
+import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito
 import org.mockito.Mockito.timeout
 import org.mockito.Mockito.verify
 import org.opensearch.action.support.ActionFilters
+import org.opensearch.alerting.AlertingPlugin.Companion.TENANT_ID_HEADER
 import org.opensearch.alerting.service.ExternalSchedulerService
 import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.cluster.service.ClusterService
@@ -60,9 +62,10 @@ class TransportDeleteMonitorActionTests : OpenSearchTestCase() {
         val settingSet = hashSetOf<Setting<*>>()
         settingSet.addAll(ClusterSettings.BUILT_IN_CLUSTER_SETTINGS)
         settingSet.add(AlertingSettings.FILTER_BY_BACKEND_ROLES)
+        settingSet.add(AlertingSettings.MULTI_TENANCY_ENABLED)
         settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ENABLED)
         settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ACCOUNT_ID)
-        settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ROLE_ARN)
+        settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ROLE_NAME)
         val clusterSettings = ClusterSettings(Settings.EMPTY, settingSet)
         whenever(clusterService.clusterSettings).thenReturn(clusterSettings)
     }
@@ -121,7 +124,7 @@ class TransportDeleteMonitorActionTests : OpenSearchTestCase() {
         val settings = Settings.builder()
             .put("plugins.alerting.external_scheduler.enabled", true)
             .put("plugins.alerting.external_scheduler.account_id", "111111111111")
-            .put("plugins.alerting.external_scheduler.role_arn", "arn:aws:iam::111:role/eb")
+            .put("plugins.alerting.external_scheduler.role_name", "eb")
             .build()
 
         val settingSet = hashSetOf<Setting<*>>()
@@ -129,7 +132,7 @@ class TransportDeleteMonitorActionTests : OpenSearchTestCase() {
         settingSet.add(AlertingSettings.FILTER_BY_BACKEND_ROLES)
         settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ENABLED)
         settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ACCOUNT_ID)
-        settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ROLE_ARN)
+        settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ROLE_NAME)
         val cs = ClusterSettings(settings, settingSet)
         whenever(clusterService.clusterSettings).thenReturn(cs)
 
@@ -156,6 +159,90 @@ class TransportDeleteMonitorActionTests : OpenSearchTestCase() {
         threadContext.putTransient(ExternalSchedulerService.SCHEDULER_ACCOUNT_ID_KEY, "999999999999")
         val value = threadContext.getTransient<String>(ExternalSchedulerService.SCHEDULER_ACCOUNT_ID_KEY)
         assertEquals("999999999999", value)
+    }
+
+    fun `test schedule ARN read from monitor metadata`() {
+        val arn = "arn:aws:scheduler:us-west-2:444455556666:schedule/default/monitor-abc123"
+        val metadata = mapOf(ExternalSchedulerService.SCHEDULE_ARN_METADATA_KEY to arn)
+        val value = metadata[ExternalSchedulerService.SCHEDULE_ARN_METADATA_KEY]
+        assertEquals(arn, value)
+    }
+
+    fun `test schedule ARN null when metadata absent`() {
+        val metadata: Map<String, String>? = null
+        val value = metadata?.get(ExternalSchedulerService.SCHEDULE_ARN_METADATA_KEY)
+        assertNull(value)
+    }
+
+    fun `test tenantId preserved across stashContext and scope launch`() {
+        val expectedTenantId = "test-tenant:test-scope"
+        threadContext.putHeader(TENANT_ID_HEADER, expectedTenantId)
+
+        val response = GetDataObjectResponse.builder()
+            .id("test-monitor-id")
+            .index(".opendistro-alerting-config")
+            .source(null)
+            .build()
+        whenever(sdkClient.getDataObject(any(GetDataObjectRequest::class.java))).thenReturn(response)
+
+        val action = createAction()
+        val request = DeleteMonitorRequest("test-monitor-id", org.opensearch.action.support.WriteRequest.RefreshPolicy.IMMEDIATE)
+        @Suppress("UNCHECKED_CAST")
+        val listener = Mockito.mock(ActionListener::class.java) as ActionListener<DeleteMonitorResponse>
+
+        invokeDoExecute(action, request, listener)
+
+        val captor = ArgumentCaptor.forClass(GetDataObjectRequest::class.java)
+        verify(sdkClient, timeout(1000)).getDataObject(captor.capture())
+        assertEquals(expectedTenantId, captor.value.tenantId())
+    }
+
+    fun `test null tenantId preserved when header absent`() {
+        // No TENANT_ID_HEADER set in threadContext
+        val response = GetDataObjectResponse.builder()
+            .id("test-monitor-id")
+            .index(".opendistro-alerting-config")
+            .source(null)
+            .build()
+        whenever(sdkClient.getDataObject(any(GetDataObjectRequest::class.java))).thenReturn(response)
+
+        val action = createAction()
+        val request = DeleteMonitorRequest("test-monitor-id", org.opensearch.action.support.WriteRequest.RefreshPolicy.IMMEDIATE)
+        @Suppress("UNCHECKED_CAST")
+        val listener = Mockito.mock(ActionListener::class.java) as ActionListener<DeleteMonitorResponse>
+
+        invokeDoExecute(action, request, listener)
+
+        val captor = ArgumentCaptor.forClass(GetDataObjectRequest::class.java)
+        verify(sdkClient, timeout(1000)).getDataObject(captor.capture())
+        assertNull(captor.value.tenantId())
+    }
+
+    fun `test action constructs with multi tenancy enabled`() {
+        val settings = Settings.builder()
+            .put("plugins.alerting.multi_tenancy_enabled", true)
+            .build()
+
+        val settingSet = hashSetOf<Setting<*>>()
+        settingSet.addAll(ClusterSettings.BUILT_IN_CLUSTER_SETTINGS)
+        settingSet.add(AlertingSettings.FILTER_BY_BACKEND_ROLES)
+        settingSet.add(AlertingSettings.MULTI_TENANCY_ENABLED)
+        settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ENABLED)
+        settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ACCOUNT_ID)
+        settingSet.add(AlertingSettings.EXTERNAL_SCHEDULER_ROLE_NAME)
+        val cs = ClusterSettings(settings, settingSet)
+        whenever(clusterService.clusterSettings).thenReturn(cs)
+
+        val action = TransportDeleteMonitorAction(
+            Mockito.mock(TransportService::class.java),
+            client,
+            Mockito.mock(ActionFilters::class.java),
+            clusterService,
+            settings,
+            Mockito.mock(NamedXContentRegistry::class.java),
+            sdkClient
+        )
+        assertNotNull(action)
     }
 
     private fun invokeDoExecute(

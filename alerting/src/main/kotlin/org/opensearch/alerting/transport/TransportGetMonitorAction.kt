@@ -36,6 +36,7 @@ import org.opensearch.commons.alerting.model.Monitor
 import org.opensearch.commons.alerting.model.ScheduledJob
 import org.opensearch.commons.alerting.model.Workflow
 import org.opensearch.commons.alerting.util.AlertingException
+import org.opensearch.commons.utils.TenantContext
 import org.opensearch.commons.utils.recreateObject
 import org.opensearch.core.action.ActionListener
 import org.opensearch.core.rest.RestStatus
@@ -71,6 +72,8 @@ class TransportGetMonitorAction @Inject constructor(
 
     @Volatile
     override var filterByEnabled = AlertingSettings.FILTER_BY_BACKEND_ROLES.get(settings)
+
+    private val multiTenancyEnabled = AlertingSettings.MULTI_TENANCY_ENABLED.get(settings)
 
     init {
         listenFilterBySettingChange(clusterService)
@@ -131,7 +134,7 @@ class TransportGetMonitorAction @Inject constructor(
                     if (!checkUserPermissionsWithResource(user, monitor?.user, actionListener, "monitor", transformedRequest.monitorId)) {
                         return@whenComplete
                     }
-                    scope.launch {
+                    scope.launch(TenantContext(tenantId)) {
                         val associatedCompositeMonitors = getAssociatedWorkflows(getResponse.id)
                         actionListener.onResponse(
                             GetMonitorResponse(
@@ -161,6 +164,8 @@ class TransportGetMonitorAction @Inject constructor(
     }
 
     private suspend fun getAssociatedWorkflows(id: String): List<AssociatedWorkflow> {
+        // Skip local scheduled-job index search when multi-tenancy is enabled.
+        if (multiTenancyEnabled) return emptyList()
         try {
             val associatedWorkflows = mutableListOf<AssociatedWorkflow>()
             val queryBuilder = QueryBuilders.nestedQuery(

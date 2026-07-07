@@ -27,6 +27,7 @@ import org.opensearch.action.search.SearchResponse
 import org.opensearch.action.support.ActionFilters
 import org.opensearch.action.support.HandledTransportAction
 import org.opensearch.action.support.clustermanager.AcknowledgedResponse
+import org.opensearch.alerting.AlertingPlugin
 import org.opensearch.alerting.MonitorMetadataService
 import org.opensearch.alerting.MonitorRunnerService.monitorCtx
 import org.opensearch.alerting.WorkflowMetadataService
@@ -50,6 +51,7 @@ import org.opensearch.alerting.workflow.CompositeWorkflowRunner
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.inject.Inject
 import org.opensearch.common.settings.Settings
+import org.opensearch.common.util.FeatureFlags
 import org.opensearch.common.xcontent.LoggingDeprecationHandler
 import org.opensearch.common.xcontent.XContentFactory.jsonBuilder
 import org.opensearch.common.xcontent.XContentHelper
@@ -68,6 +70,7 @@ import org.opensearch.commons.alerting.model.Workflow
 import org.opensearch.commons.alerting.util.AlertingException
 import org.opensearch.commons.alerting.util.isMonitorOfStandardType
 import org.opensearch.commons.authuser.User
+import org.opensearch.commons.utils.TenantContext
 import org.opensearch.commons.utils.recreateObject
 import org.opensearch.core.action.ActionListener
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry
@@ -148,6 +151,24 @@ class TransportIndexWorkflowAction @Inject constructor(
             return
         }
 
+        // Block workflow creation on pluggable dataformat domains
+        if (FeatureFlags.isEnabled(
+                FeatureFlags.PLUGGABLE_DATAFORMAT_EXPERIMENTAL_FLAG
+            )
+        ) {
+            actionListener.onFailure(
+                AlertingException.wrap(
+                    OpenSearchStatusException(
+                        "Monitor creation/update failed. Composite monitors and DSL-based monitors " +
+                            "are not supported on this domain type. This domain supports PPL as the query language for " +
+                            "alert monitors. It also supports cluster metrics monitors. Please create one of these monitor types instead.",
+                        RestStatus.FORBIDDEN
+                    )
+                )
+            )
+            return
+        }
+
         val transformedRequest = request as? IndexWorkflowRequest
             ?: recreateObject(request, namedWriteableRegistry) {
                 IndexWorkflowRequest(it)
@@ -195,7 +216,8 @@ class TransportIndexWorkflowAction @Inject constructor(
             }
         }
 
-        scope.launch {
+        val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
+        scope.launch(TenantContext(tenantId)) {
             try {
                 val triggerCount = transformedRequest.workflow.triggers.size
                 if (triggerCount > maxTriggersPerMonitor) {
@@ -216,7 +238,7 @@ class TransportIndexWorkflowAction @Inject constructor(
                         override fun onResponse(response: AcknowledgedResponse) {
                             // Stash the context and start the workflow creation
                             client.threadPool().threadContext.stashContext().use {
-                                IndexWorkflowHandler(client, actionListener, transformedRequest, user).resolveUserAndStart()
+                                IndexWorkflowHandler(client, actionListener, transformedRequest, user, tenantId).resolveUserAndStart()
                             }
                         }
 
@@ -247,9 +269,10 @@ class TransportIndexWorkflowAction @Inject constructor(
         private val actionListener: ActionListener<IndexWorkflowResponse>,
         private val request: IndexWorkflowRequest,
         private val user: User?,
+        private val tenantId: String?,
     ) {
         fun resolveUserAndStart() {
-            scope.launch {
+            scope.launch(TenantContext(tenantId)) {
                 if (user == null) {
                     // Security is disabled, add empty user to Workflow. user is null for older versions.
                     request.workflow = request.workflow
@@ -273,7 +296,7 @@ class TransportIndexWorkflowAction @Inject constructor(
                     override fun onFailure(t: Exception) {
                         // https://github.com/opensearch-project/alerting/issues/646
                         if (ExceptionsHelper.unwrapCause(t) is ResourceAlreadyExistsException) {
-                            scope.launch {
+                            scope.launch(TenantContext(tenantId)) {
                                 // Wait for the yellow status
                                 val request = ClusterHealthRequest()
                                     .indices(SCHEDULED_JOBS_INDEX)
@@ -323,11 +346,11 @@ class TransportIndexWorkflowAction @Inject constructor(
          */
         private fun prepareWorkflowIndexing() {
             if (request.method == RestRequest.Method.PUT) {
-                scope.launch {
+                scope.launch(TenantContext(tenantId)) {
                     updateWorkflow()
                 }
             } else {
-                scope.launch {
+                scope.launch(TenantContext(tenantId)) {
                     indexWorkflow()
                 }
             }
@@ -484,7 +507,7 @@ class TransportIndexWorkflowAction @Inject constructor(
                     user,
                     currentWorkflow.user,
                     actionListener,
-                    "workfklow",
+                    "workflow",
                     request.workflowId
                 )
             ) {

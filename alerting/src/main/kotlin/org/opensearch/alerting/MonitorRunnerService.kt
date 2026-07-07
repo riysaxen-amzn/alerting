@@ -52,6 +52,7 @@ import org.opensearch.alerting.settings.DestinationSettings.Companion.HOST_DENY_
 import org.opensearch.alerting.settings.DestinationSettings.Companion.loadDestinationSettings
 import org.opensearch.alerting.util.DocLevelMonitorQueries
 import org.opensearch.alerting.util.IndexUtils
+import org.opensearch.alerting.util.MustacheTemplateService
 import org.opensearch.alerting.util.isDocLevelMonitor
 import org.opensearch.alerting.workflow.CompositeWorkflowRunner
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver
@@ -72,13 +73,13 @@ import org.opensearch.commons.alerting.util.AlertingException
 import org.opensearch.commons.alerting.util.IndexPatternUtils
 import org.opensearch.commons.alerting.util.isBucketLevelMonitor
 import org.opensearch.commons.alerting.util.isMonitorOfStandardType
+import org.opensearch.commons.alerting.util.isPPLMonitor
 import org.opensearch.core.action.ActionListener
 import org.opensearch.core.rest.RestStatus
 import org.opensearch.core.xcontent.NamedXContentRegistry
 import org.opensearch.monitor.jvm.JvmStats
 import org.opensearch.script.Script
 import org.opensearch.script.ScriptService
-import org.opensearch.script.TemplateScript
 import org.opensearch.threadpool.ThreadPool
 import org.opensearch.transport.TransportService
 import org.opensearch.transport.client.Client
@@ -144,6 +145,11 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
 
     fun registerTriggerService(triggerService: TriggerService): MonitorRunnerService {
         this.monitorCtx.triggerService = triggerService
+        return this
+    }
+
+    fun registerMustacheTemplateService(mustacheTemplateService: MustacheTemplateService): MonitorRunnerService {
+        this.monitorCtx.mustacheTemplateService = mustacheTemplateService
         return this
     }
 
@@ -264,6 +270,8 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
             monitorCtx.multiTenantTriggerEvalEnabled = it
         }
 
+        monitorCtx.multiTenancyEnabled = AlertingSettings.MULTI_TENANCY_ENABLED.get(monitorCtx.settings)
+
         return this
     }
 
@@ -299,6 +307,7 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
     override fun doClose() {}
 
     override fun postIndex(job: ScheduledJob) {
+        if (monitorCtx.multiTenancyEnabled) return
         if (job is Monitor) {
             launch {
                 try {
@@ -327,6 +336,7 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
     }
 
     override fun postDelete(jobId: String) {
+        if (monitorCtx.multiTenancyEnabled) return
         launch {
             try {
                 monitorCtx.moveAlertsRetryPolicy!!.retry(logger) {
@@ -438,7 +448,9 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
     ): MonitorRunResult<*> {
         // Updating the scheduled job index at the start of monitor execution runs for when there is an upgrade the the schema mapping
         // has not been updated.
-        if (!IndexUtils.scheduledJobIndexUpdated && monitorCtx.clusterService != null && monitorCtx.client != null) {
+        if (!monitorCtx.multiTenancyEnabled && !IndexUtils.scheduledJobIndexUpdated &&
+            monitorCtx.clusterService != null && monitorCtx.client != null
+        ) {
             IndexUtils.updateIndexMapping(
                 ScheduledJob.SCHEDULED_JOBS_INDEX,
                 ScheduledJobIndices.scheduledJobMappings(), monitorCtx.clusterService!!.state(), monitorCtx.client!!.admin().indices(),
@@ -477,7 +489,19 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
                 "Executing scheduled monitor - id: ${monitor.id}, type: ${monitor.monitorType}, periodStart: $periodStart, " +
                     "periodEnd: $periodEnd, dryrun: $dryrun, executionId: $executionId"
             )
-            val runResult = if (monitor.isBucketLevelMonitor()) {
+            val runResult = if (monitor.isPPLMonitor()) {
+                // PPL Monitor runs with QueryLevelMonitorRunner
+                // as PPL Monitors are ultimately query-based
+                QueryLevelMonitorRunner.runMonitor(
+                    monitor,
+                    monitorCtx,
+                    periodStart,
+                    periodEnd,
+                    dryrun,
+                    executionId = executionId,
+                    transportService = transportService,
+                )
+            } else if (monitor.isBucketLevelMonitor()) {
                 BucketLevelMonitorRunner.runMonitor(
                     monitor,
                     monitorCtx,
@@ -583,8 +607,6 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
     }
 
     internal fun compileTemplate(template: Script, ctx: TriggerExecutionContext): String {
-        return monitorCtx.scriptService!!.compile(template, TemplateScript.CONTEXT)
-            .newInstance(template.params + mapOf("ctx" to ctx.asTemplateArg()))
-            .execute()
+        return monitorCtx.mustacheTemplateService!!.renderScript(template, mapOf("ctx" to ctx.asTemplateArg()))
     }
 }

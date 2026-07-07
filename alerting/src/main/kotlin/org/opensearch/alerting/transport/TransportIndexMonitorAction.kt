@@ -28,6 +28,10 @@ import org.opensearch.action.support.WriteRequest.RefreshPolicy
 import org.opensearch.action.support.clustermanager.AcknowledgedResponse
 import org.opensearch.alerting.AlertingPlugin
 import org.opensearch.alerting.MonitorMetadataService
+import org.opensearch.alerting.PPLUtils.appendCustomCondition
+import org.opensearch.alerting.PPLUtils.appendDataRowsLimit
+import org.opensearch.alerting.PPLUtils.customConditionIsValid
+import org.opensearch.alerting.PPLUtils.executePplQuery
 import org.opensearch.alerting.core.ScheduledJobIndices
 import org.opensearch.alerting.opensearchapi.suspendUntil
 import org.opensearch.alerting.service.DeleteMonitorService
@@ -37,21 +41,30 @@ import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.alerting.settings.AlertingSettings.Companion.ALERTING_MAX_MONITORS
 import org.opensearch.alerting.settings.AlertingSettings.Companion.INDEX_TIMEOUT
 import org.opensearch.alerting.settings.AlertingSettings.Companion.MAX_ACTION_THROTTLE_VALUE
+import org.opensearch.alerting.settings.AlertingSettings.Companion.MAX_PPL_TRIGGERS_PER_MONITOR
 import org.opensearch.alerting.settings.AlertingSettings.Companion.MAX_TRIGGERS_PER_MONITOR
+import org.opensearch.alerting.settings.AlertingSettings.Companion.MULTI_TENANT_TRIGGER_EVAL_ENABLED
+import org.opensearch.alerting.settings.AlertingSettings.Companion.NOTIFICATION_MESSAGE_SOURCE_MAX_LENGTH
+import org.opensearch.alerting.settings.AlertingSettings.Companion.NOTIFICATION_SUBJECT_SOURCE_MAX_LENGTH
+import org.opensearch.alerting.settings.AlertingSettings.Companion.PPL_MAX_QUERY_LENGTH
+import org.opensearch.alerting.settings.AlertingSettings.Companion.PPL_QUERY_RESULTS_MAX_DATAROWS
 import org.opensearch.alerting.settings.AlertingSettings.Companion.REQUEST_TIMEOUT
 import org.opensearch.alerting.settings.DestinationSettings.Companion.ALLOW_LIST
+import org.opensearch.alerting.util.ArnValidator
 import org.opensearch.alerting.util.DocLevelMonitorQueries
 import org.opensearch.alerting.util.IndexUtils
 import org.opensearch.alerting.util.addUserBackendRolesFilter
 import org.opensearch.alerting.util.await
 import org.opensearch.alerting.util.getRoleFilterEnabled
 import org.opensearch.alerting.util.isADMonitor
+import org.opensearch.alerting.util.isClusterMetricsMonitor
 import org.opensearch.alerting.util.isUnsupportedMultiTenantMonitorType
 import org.opensearch.alerting.util.use
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.inject.Inject
 import org.opensearch.common.settings.Settings
 import org.opensearch.common.unit.TimeValue
+import org.opensearch.common.util.FeatureFlags
 import org.opensearch.common.xcontent.LoggingDeprecationHandler
 import org.opensearch.common.xcontent.XContentFactory
 import org.opensearch.common.xcontent.XContentHelper
@@ -62,16 +75,22 @@ import org.opensearch.commons.alerting.action.IndexMonitorResponse
 import org.opensearch.commons.alerting.model.DocLevelMonitorInput
 import org.opensearch.commons.alerting.model.DocLevelMonitorInput.Companion.DOC_LEVEL_INPUT_FIELD
 import org.opensearch.commons.alerting.model.Monitor
+import org.opensearch.commons.alerting.model.Monitor.MonitorType
 import org.opensearch.commons.alerting.model.MonitorMetadata
+import org.opensearch.commons.alerting.model.PPLInput
+import org.opensearch.commons.alerting.model.PPLTrigger
 import org.opensearch.commons.alerting.model.ScheduleJobPayload
 import org.opensearch.commons.alerting.model.ScheduledJob
 import org.opensearch.commons.alerting.model.ScheduledJob.Companion.SCHEDULED_JOBS_INDEX
 import org.opensearch.commons.alerting.model.SearchInput
 import org.opensearch.commons.alerting.model.remote.monitors.RemoteDocLevelMonitorInput
 import org.opensearch.commons.alerting.model.remote.monitors.RemoteDocLevelMonitorInput.Companion.REMOTE_DOC_LEVEL_MONITOR_INPUT_FIELD
+import org.opensearch.commons.alerting.model.userErrorMessage
 import org.opensearch.commons.alerting.util.AlertingException
 import org.opensearch.commons.alerting.util.isMonitorOfStandardType
+import org.opensearch.commons.alerting.util.isPPLMonitor
 import org.opensearch.commons.authuser.User
+import org.opensearch.commons.utils.TenantContext
 import org.opensearch.commons.utils.recreateObject
 import org.opensearch.core.action.ActionListener
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry
@@ -88,9 +107,11 @@ import org.opensearch.remote.metadata.client.PutDataObjectRequest
 import org.opensearch.remote.metadata.client.SdkClient
 import org.opensearch.rest.RestRequest
 import org.opensearch.search.builder.SearchSourceBuilder
+import org.opensearch.sql.plugin.transport.TransportPPLQueryResponse
 import org.opensearch.tasks.Task
 import org.opensearch.transport.TransportService
 import org.opensearch.transport.client.Client
+import org.opensearch.transport.client.node.NodeClient
 import java.io.IOException
 import java.time.Duration
 import java.util.Locale
@@ -116,25 +137,49 @@ class TransportIndexMonitorAction @Inject constructor(
 
     @Volatile private var maxMonitors = ALERTING_MAX_MONITORS.get(settings)
     @Volatile private var maxTriggersPerMonitor = MAX_TRIGGERS_PER_MONITOR.get(settings)
+    @Volatile private var multiTenantTriggerEvalEnabled = MULTI_TENANT_TRIGGER_EVAL_ENABLED.get(settings)
     @Volatile private var requestTimeout = REQUEST_TIMEOUT.get(settings)
     @Volatile private var indexTimeout = INDEX_TIMEOUT.get(settings)
     @Volatile private var maxActionThrottle = MAX_ACTION_THROTTLE_VALUE.get(settings)
     @Volatile private var allowList = ALLOW_LIST.get(settings)
+
+    // PPL Alerting related settings
+    @Volatile private var maxQueryLength = PPL_MAX_QUERY_LENGTH.get(settings)
+    @Volatile private var maxQueryResults = PPL_QUERY_RESULTS_MAX_DATAROWS.get(settings)
+    @Volatile private var maxPPLTriggers = MAX_PPL_TRIGGERS_PER_MONITOR.get(settings)
+    @Volatile private var notificationSubjectMaxLength = NOTIFICATION_SUBJECT_SOURCE_MAX_LENGTH.get(settings)
+    @Volatile private var notificationMessageMaxLength = NOTIFICATION_MESSAGE_SOURCE_MAX_LENGTH.get(settings)
+
     @Volatile override var filterByEnabled = AlertingSettings.FILTER_BY_BACKEND_ROLES.get(settings)
     @Volatile private var externalSchedulerEnabled = AlertingSettings.EXTERNAL_SCHEDULER_ENABLED.get(settings)
     @Volatile private var externalSchedulerAccountId = AlertingSettings.EXTERNAL_SCHEDULER_ACCOUNT_ID.get(settings)
     @Volatile private var jobQueueName = AlertingSettings.JOB_QUEUE_NAME.get(settings)
-    @Volatile private var externalSchedulerRoleArn = AlertingSettings.EXTERNAL_SCHEDULER_ROLE_ARN.get(settings)
+    @Volatile private var externalSchedulerRoleName = AlertingSettings.EXTERNAL_SCHEDULER_ROLE_NAME.get(settings)
+    @Volatile private var externalSchedulerExecutionRoleName = AlertingSettings.EXTERNAL_SCHEDULER_EXECUTION_ROLE_NAME.get(settings)
 
     private val multiTenancyEnabled = AlertingSettings.MULTI_TENANCY_ENABLED.get(settings)
 
     init {
         clusterService.clusterSettings.addSettingsUpdateConsumer(ALERTING_MAX_MONITORS) { maxMonitors = it }
         clusterService.clusterSettings.addSettingsUpdateConsumer(MAX_TRIGGERS_PER_MONITOR) { maxTriggersPerMonitor = it }
+        clusterService.clusterSettings.addSettingsUpdateConsumer(MULTI_TENANT_TRIGGER_EVAL_ENABLED) {
+            multiTenantTriggerEvalEnabled = it
+        }
         clusterService.clusterSettings.addSettingsUpdateConsumer(REQUEST_TIMEOUT) { requestTimeout = it }
         clusterService.clusterSettings.addSettingsUpdateConsumer(INDEX_TIMEOUT) { indexTimeout = it }
         clusterService.clusterSettings.addSettingsUpdateConsumer(MAX_ACTION_THROTTLE_VALUE) { maxActionThrottle = it }
         clusterService.clusterSettings.addSettingsUpdateConsumer(ALLOW_LIST) { allowList = it }
+
+        clusterService.clusterSettings.addSettingsUpdateConsumer(PPL_MAX_QUERY_LENGTH) { maxQueryLength = it }
+        clusterService.clusterSettings.addSettingsUpdateConsumer(PPL_QUERY_RESULTS_MAX_DATAROWS) { maxQueryResults = it }
+        clusterService.clusterSettings.addSettingsUpdateConsumer(MAX_PPL_TRIGGERS_PER_MONITOR) { maxPPLTriggers = it }
+        clusterService.clusterSettings.addSettingsUpdateConsumer(NOTIFICATION_SUBJECT_SOURCE_MAX_LENGTH) {
+            notificationSubjectMaxLength = it
+        }
+        clusterService.clusterSettings.addSettingsUpdateConsumer(NOTIFICATION_MESSAGE_SOURCE_MAX_LENGTH) {
+            notificationMessageMaxLength = it
+        }
+
         clusterService.clusterSettings.addSettingsUpdateConsumer(AlertingSettings.EXTERNAL_SCHEDULER_ENABLED) {
             externalSchedulerEnabled = it
         }
@@ -144,9 +189,13 @@ class TransportIndexMonitorAction @Inject constructor(
         clusterService.clusterSettings.addSettingsUpdateConsumer(AlertingSettings.JOB_QUEUE_NAME) {
             jobQueueName = it
         }
-        clusterService.clusterSettings.addSettingsUpdateConsumer(AlertingSettings.EXTERNAL_SCHEDULER_ROLE_ARN) {
-            externalSchedulerRoleArn = it
+        clusterService.clusterSettings.addSettingsUpdateConsumer(AlertingSettings.EXTERNAL_SCHEDULER_ROLE_NAME) {
+            externalSchedulerRoleName = it
         }
+        clusterService.clusterSettings.addSettingsUpdateConsumer(AlertingSettings.EXTERNAL_SCHEDULER_EXECUTION_ROLE_NAME) {
+            externalSchedulerExecutionRoleName = it
+        }
+
         listenFilterBySettingChange(clusterService)
     }
 
@@ -162,6 +211,24 @@ class TransportIndexMonitorAction @Inject constructor(
                     OpenSearchStatusException(
                         "${transformedRequest.monitor.monitorType} monitors are not allowed when multi-tenancy is enabled.",
                         RestStatus.METHOD_NOT_ALLOWED
+                    )
+                )
+            )
+            return
+        }
+
+        // Block non-PPL monitors on pluggable dataformat domains
+        if (FeatureFlags.isEnabled(FeatureFlags.PLUGGABLE_DATAFORMAT_EXPERIMENTAL_FLAG) &&
+            !transformedRequest.monitor.isPPLMonitor() &&
+            !transformedRequest.monitor.isClusterMetricsMonitor()
+        ) {
+            actionListener.onFailure(
+                AlertingException.wrap(
+                    OpenSearchStatusException(
+                        "Monitor creation/update failed. ${transformedRequest.monitor.monitorType} type and other DSL-based monitors " +
+                            "are not supported on this domain type. This domain supports PPL as the query language for " +
+                            "alert monitors. It also supports cluster metrics monitors. Please create one of these monitor types instead.",
+                        RestStatus.FORBIDDEN
                     )
                 )
             )
@@ -208,11 +275,13 @@ class TransportIndexMonitorAction @Inject constructor(
             }
         }
 
-        if (!isADMonitor(transformedRequest.monitor)) {
-            checkIndicesAndExecute(client, actionListener, transformedRequest, user)
-        } else {
+        if (isADMonitor(transformedRequest.monitor)) {
             // check if user has access to any anomaly detector for AD monitor
             checkAnomalyDetectorAndExecute(client, actionListener, transformedRequest, user)
+        } else if (transformedRequest.monitor.monitorType == MonitorType.PPL_MONITOR.value) {
+            checkPPLQueryAndExecute(actionListener, transformedRequest, user)
+        } else {
+            checkIndicesAndExecute(client, actionListener, transformedRequest, user)
         }
     }
 
@@ -254,8 +323,11 @@ class TransportIndexMonitorAction @Inject constructor(
             object : ActionListener<SearchResponse> {
                 override fun onResponse(searchResponse: SearchResponse) {
                     // User has read access to configured indices in the monitor, now create monitor with out user context.
+                    val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
+                    val schedulerAccountId = client.threadPool().threadContext
+                        .getTransient<String>(ExternalSchedulerService.SCHEDULER_ACCOUNT_ID_KEY)
                     client.threadPool().threadContext.stashContext().use {
-                        IndexMonitorHandler(client, actionListener, request, user).resolveUserAndStart()
+                        IndexMonitorHandler(client, actionListener, request, user, tenantId, schedulerAccountId).resolveUserAndStart()
                     }
                 }
 
@@ -279,6 +351,221 @@ class TransportIndexMonitorAction @Inject constructor(
         )
     }
 
+    private fun checkPPLQueryAndExecute(
+        actionListener: ActionListener<IndexMonitorResponse>,
+        indexMonitorRequest: IndexMonitorRequest,
+        user: User?
+    ) {
+        val pplMonitor = indexMonitorRequest.monitor
+
+        // run basic validations against the PPL Monitor
+        val pplMonitorValid = validatePPLMonitor(pplMonitor, actionListener)
+        if (!pplMonitorValid) {
+            return
+        }
+
+        // validate the PPL query syntax and that user has permissions to
+        // the indices being queried. if it does, proceed to index the
+        // PPL Monitor
+        validatePPLQuery(pplMonitor, actionListener) {
+            val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
+            val schedulerAccountId = client.threadPool().threadContext
+                .getTransient<String>(ExternalSchedulerService.SCHEDULER_ACCOUNT_ID_KEY)
+
+            // user permissions to indices have already been checked if we made it to the onResponse(),
+            // proceed without the context of the user, otherwise,
+            // we would get permissions errors trying to search the alerting-config
+            // index as the user. pass the user object itself so backend
+            // roles can be matched and checked downstream
+            client.threadPool().threadContext.stashContext().use {
+                val pplMonitor = indexMonitorRequest.monitor
+                if (user == null) {
+                    indexMonitorRequest.monitor = pplMonitor
+                        .copy(user = User("", listOf(), listOf(), mapOf()))
+                } else {
+                    indexMonitorRequest.monitor = pplMonitor
+                        .copy(user = User(user.name, user.backendRoles, user.roles, user.customAttributes))
+                }
+                IndexMonitorHandler(
+                    client,
+                    actionListener,
+                    indexMonitorRequest,
+                    user,
+                    tenantId,
+                    schedulerAccountId
+                ).resolveUserAndStart()
+            }
+        }
+    }
+
+    private fun validatePPLMonitor(pplMonitor: Monitor, actionListener: ActionListener<IndexMonitorResponse>): Boolean {
+        if (pplMonitor.triggers.size > maxPPLTriggers) {
+            actionListener.onFailure(
+                AlertingException.wrap(
+                    IllegalArgumentException(
+                        "PPL Monitor ${pplMonitor.id} has too many triggers. Max allowed triggers is $maxPPLTriggers."
+                    )
+                )
+            )
+            return false
+        }
+
+        pplMonitor.triggers.forEach { trigger ->
+            val pplTrigger = trigger as PPLTrigger
+            if (pplTrigger.conditionType == PPLTrigger.ConditionType.NUMBER_OF_RESULTS &&
+                pplTrigger.numResultsValue!! > maxQueryResults
+            ) {
+                actionListener.onFailure(
+                    AlertingException.wrap(
+                        IllegalArgumentException(
+                            "Trigger ${trigger.id} checks for number of results threshold of ${trigger.numResultsValue}, " +
+                                "but PPL Alerting is configured only to retrieve $maxQueryResults query results maximum. " +
+                                "Please lower the number of results value to one below this maximum value, or adjust the cluster " +
+                                "setting: ${PPL_QUERY_RESULTS_MAX_DATAROWS.key}"
+                        )
+                    )
+                )
+                return false
+            }
+
+            pplTrigger.actions.forEach { action ->
+                if ((action.subjectTemplate?.idOrCode?.length ?: 0) > notificationSubjectMaxLength) {
+                    actionListener.onFailure(
+                        AlertingException.wrap(
+                            IllegalArgumentException(
+                                "Notification subject source cannot exceed length: $notificationSubjectMaxLength"
+                            )
+                        )
+                    )
+                    return false
+                }
+
+                if (action.messageTemplate.idOrCode.length > notificationMessageMaxLength) {
+                    actionListener.onFailure(
+                        AlertingException.wrap(
+                            IllegalArgumentException(
+                                "Notification message source cannot exceed length: $notificationMessageMaxLength"
+                            )
+                        )
+                    )
+                    return false
+                }
+            }
+        }
+
+        val query = (pplMonitor.inputs[0] as PPLInput).query
+
+        // ensure the query length doesn't exceed the limit
+        if (query.length > maxQueryLength) {
+            actionListener.onFailure(
+                AlertingException.wrap(
+                    IllegalArgumentException(
+                        "PPL Query length must be at most $maxQueryLength but was ${query.length}"
+                    )
+                )
+            )
+            return false
+        }
+
+        return true
+    }
+
+    private fun validatePPLQuery(
+        pplMonitor: Monitor,
+        actionListener: ActionListener<IndexMonitorResponse>,
+        onSuccess: () -> Unit
+    ) {
+        // first attempt to run the monitor query and all possible
+        // extensions of it (from custom conditions)
+        val baseQuery = (pplMonitor.inputs[0] as PPLInput).query
+
+        val limitedQueryToExecute = appendDataRowsLimit(baseQuery, maxQueryResults)
+
+        // now PPL explain the base query as is.
+        // if there are any PPL syntax, index not found, insufficient index permissions, or other errors,
+        // this will throw an exception from the SQL/PPL plugin
+        executePplQuery(
+            limitedQueryToExecute,
+            true,
+            client as NodeClient,
+            object : ActionListener<TransportPPLQueryResponse> {
+                override fun onResponse(response: TransportPPLQueryResponse) {
+                    // Base query is valid. Now validate custom conditions.
+                    val customTriggers = pplMonitor.triggers
+                        .filterIsInstance<PPLTrigger>()
+                        .filter { it.conditionType == PPLTrigger.ConditionType.CUSTOM }
+
+                    validatePPLCustomConditions(baseQuery, customTriggers, 0, actionListener, onSuccess)
+                }
+
+                override fun onFailure(e: Exception) {
+                    actionListener.onFailure(
+                        AlertingException.wrap(
+                            IllegalArgumentException("PPL Query validation failed: ${e.userErrorMessage()}")
+                        )
+                    )
+                }
+            }
+        )
+    }
+
+    private fun validatePPLCustomConditions(
+        baseQuery: String,
+        customTriggers: List<PPLTrigger>,
+        recursionIndex: Int,
+        actionListener: ActionListener<IndexMonitorResponse>,
+        onSuccess: () -> Unit
+    ) {
+        // base case: the recursion index iterates over the list of custom triggers. if
+        // we have scanned all custom triggers and none of them had issues, all custom
+        // triggers are valid, proceed with indexing the PPL Monitor
+        if (recursionIndex >= customTriggers.size) {
+            onSuccess()
+            return
+        }
+
+        val customTrigger = customTriggers[recursionIndex]
+        val customCondition = customTrigger.customCondition!!
+
+        // validate the custom condition is a where statement and
+        // not some other valid PPL statement
+        if (!customConditionIsValid(customCondition)) {
+            actionListener.onFailure(
+                AlertingException.wrap(
+                    IllegalArgumentException(
+                        "Custom condition for trigger ${customTrigger.name} is invalid, " +
+                            "custom condition must be a valid PPL where statement."
+                    )
+                )
+            )
+            return
+        }
+
+        val queryWithCustomCondition = appendCustomCondition(baseQuery, customCondition)
+        val limitedQueryWithCustomCondition = appendDataRowsLimit(queryWithCustomCondition, maxQueryResults)
+
+        // if the custom condition is invalid, this will throw an exception
+        // from the SQL/PPL plugin and onFailure will be called
+        executePplQuery(
+            limitedQueryWithCustomCondition,
+            true,
+            client as NodeClient,
+            object : ActionListener<TransportPPLQueryResponse> {
+                override fun onResponse(response: TransportPPLQueryResponse) {
+                    validatePPLCustomConditions(baseQuery, customTriggers, recursionIndex + 1, actionListener, onSuccess)
+                }
+
+                override fun onFailure(e: Exception) {
+                    actionListener.onFailure(
+                        AlertingException.wrap(
+                            IllegalArgumentException("PPL Query validation failed: ${e.userErrorMessage()}")
+                        )
+                    )
+                }
+            }
+        )
+    }
+
     /**
      * It's no reasonable to create AD monitor if the user has no access to any detector. Otherwise
      * the monitor will not get any anomaly result. So we will check user has access to at least 1
@@ -292,8 +579,11 @@ class TransportIndexMonitorAction @Inject constructor(
         request: IndexMonitorRequest,
         user: User?,
     ) {
+        val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
+        val schedulerAccountId = client.threadPool().threadContext
+            .getTransient<String>(ExternalSchedulerService.SCHEDULER_ACCOUNT_ID_KEY)
         client.threadPool().threadContext.stashContext().use {
-            IndexMonitorHandler(client, actionListener, request, user).resolveUserAndStartForAD()
+            IndexMonitorHandler(client, actionListener, request, user, tenantId, schedulerAccountId).resolveUserAndStartForAD()
         }
     }
 
@@ -302,6 +592,8 @@ class TransportIndexMonitorAction @Inject constructor(
         private val actionListener: ActionListener<IndexMonitorResponse>,
         private val request: IndexMonitorRequest,
         private val user: User?,
+        private val tenantId: String?,
+        private val schedulerAccountId: String?,
     ) {
 
         fun resolveUserAndStart() {
@@ -360,6 +652,12 @@ class TransportIndexMonitorAction @Inject constructor(
         }
 
         fun start() {
+            // When multi-tenancy is enabled, monitors are stored in remote metadata —
+            // skip local scheduled-job index creation and mapping updates.
+            if (multiTenancyEnabled) {
+                prepareMonitorIndexing()
+                return
+            }
             if (!scheduledJobIndices.scheduledJobIndexExists()) {
                 scheduledJobIndices.initScheduledJobIndex(object : ActionListener<CreateIndexResponse> {
                     override fun onResponse(response: CreateIndexResponse) {
@@ -368,7 +666,7 @@ class TransportIndexMonitorAction @Inject constructor(
                     override fun onFailure(t: Exception) {
                         // https://github.com/opensearch-project/alerting/issues/646
                         if (ExceptionsHelper.unwrapCause(t) is ResourceAlreadyExistsException) {
-                            scope.launch {
+                            scope.launch(TenantContext(tenantId)) {
                                 // Wait for the yellow status
                                 val request = ClusterHealthRequest()
                                     .indices(SCHEDULED_JOBS_INDEX)
@@ -420,14 +718,20 @@ class TransportIndexMonitorAction @Inject constructor(
             try {
                 validateActionThrottle(request.monitor, maxActionThrottle, TimeValue.timeValueMinutes(1))
                 validateTriggerCount(request.monitor)
+                ArnValidator.validateTargetArn(request.monitor.target)
             } catch (e: RuntimeException) {
                 actionListener.onFailure(AlertingException.wrap(e))
                 return
             }
 
             if (request.method == RestRequest.Method.PUT) {
-                scope.launch {
+                scope.launch(TenantContext(tenantId)) {
                     updateMonitor()
+                }
+            } else if (multiTenancyEnabled) {
+                // Skip local scheduled-job index search for monitor count when multi-tenancy is enabled.
+                scope.launch(TenantContext(tenantId)) {
+                    indexMonitor()
                 }
             } else {
                 val query = QueryBuilders.boolQuery().filter(QueryBuilders.termQuery("${Monitor.MONITOR_TYPE}.type", Monitor.MONITOR_TYPE))
@@ -452,6 +756,14 @@ class TransportIndexMonitorAction @Inject constructor(
         private fun validateTriggerCount(monitor: Monitor) {
             require(monitor.triggers.size <= maxTriggersPerMonitor) {
                 "The current cluster settings only allow up to $maxTriggersPerMonitor triggers per monitor."
+            }
+            if (multiTenantTriggerEvalEnabled &&
+                Monitor.MonitorType.valueOf(monitor.monitorType.uppercase(Locale.ROOT)) ==
+                Monitor.MonitorType.BUCKET_LEVEL_MONITOR
+            ) {
+                require(monitor.triggers.size <= 1) {
+                    "Bucket-level monitors only support 1 trigger when remote trigger evaluation is enabled."
+                }
             }
         }
 
@@ -489,7 +801,7 @@ class TransportIndexMonitorAction @Inject constructor(
                     )
                 )
             } else {
-                scope.launch {
+                scope.launch(TenantContext(tenantId)) {
                     indexMonitor()
                 }
             }
@@ -546,7 +858,12 @@ class TransportIndexMonitorAction @Inject constructor(
 
             log.info("Creating new monitor: ${request.monitor.name}, type: ${request.monitor.monitorType}")
 
-            val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
+            if (!tenantId.isNullOrEmpty()) {
+                val updatedMetadata = (request.monitor.metadata.orEmpty()) +
+                    (AlertingPlugin.TENANT_ID_METADATA_KEY to tenantId)
+                request.monitor = request.monitor.copy(metadata = updatedMetadata)
+            }
+
             val monitorObj = ToXContentObject { builder, params ->
                 request.monitor.toXContentWithUser(builder, ToXContent.MapParams(mapOf("with_type" to "true")))
             }
@@ -571,39 +888,47 @@ class TransportIndexMonitorAction @Inject constructor(
                 }
                 val indexResponse = putResponse.indexResponse()
                     ?: throw OpenSearchStatusException("No index response from SDK", RestStatus.INTERNAL_SERVER_ERROR)
-                var metadata: MonitorMetadata?
-                try { // delete monitor if metadata creation fails, log the right error and re-throw the error to fail listener
-                    request.monitor = request.monitor.copy(id = indexResponse.id)
-                    var (monitorMetadata: MonitorMetadata, created: Boolean) = MonitorMetadataService.getOrCreateMetadata(request.monitor)
-                    if (created == false) {
-                        log.warn("Metadata doc id:${monitorMetadata.id} exists, but it shouldn't!")
+                request.monitor = request.monitor.copy(id = indexResponse.id)
+
+                if (!multiTenancyEnabled) {
+                    var metadata: MonitorMetadata?
+                    try {
+                        var (monitorMetadata: MonitorMetadata, created: Boolean) =
+                            MonitorMetadataService.getOrCreateMetadata(request.monitor)
+                        if (created == false) {
+                            log.warn("Metadata doc id:${monitorMetadata.id} exists, but it shouldn't!")
+                        }
+                        metadata = monitorMetadata
+                    } catch (t: Exception) {
+                        log.error("failed to create metadata for monitor ${indexResponse.id}. deleting monitor")
+                        cleanupMonitorAfterPartialFailure(request.monitor, indexResponse)
+                        throw t
                     }
-                    metadata = monitorMetadata
-                } catch (t: Exception) {
-                    log.error("failed to create metadata for monitor ${indexResponse.id}. deleting monitor")
-                    cleanupMonitorAfterPartialFailure(request.monitor, indexResponse)
-                    throw t
-                }
-                try {
-                    if (
-                        request.monitor.isMonitorOfStandardType() &&
-                        Monitor.MonitorType.valueOf(request.monitor.monitorType.uppercase(Locale.ROOT)) ==
-                        Monitor.MonitorType.DOC_LEVEL_MONITOR
-                    ) {
-                        indexDocLevelMonitorQueries(request.monitor, indexResponse.id, metadata, request.refreshPolicy)
+                    try {
+                        if (
+                            request.monitor.isMonitorOfStandardType() &&
+                            Monitor.MonitorType.valueOf(request.monitor.monitorType.uppercase(Locale.ROOT)) ==
+                            Monitor.MonitorType.DOC_LEVEL_MONITOR
+                        ) {
+                            indexDocLevelMonitorQueries(request.monitor, indexResponse.id, metadata, request.refreshPolicy)
+                        }
+                        // When inserting queries in queryIndex we could update sourceToQueryIndexMapping
+                        MonitorMetadataService.upsertMetadata(metadata, updating = true)
+                    } catch (t: Exception) {
+                        log.error("failed to index doc level queries monitor ${indexResponse.id}. deleting monitor", t)
+                        cleanupMonitorAfterPartialFailure(request.monitor, indexResponse)
+                        throw t
                     }
-                    // When inserting queries in queryIndex we could update sourceToQueryIndexMapping
-                    MonitorMetadataService.upsertMetadata(metadata, updating = true)
-                } catch (t: Exception) {
-                    log.error("failed to index doc level queries monitor ${indexResponse.id}. deleting monitor", t)
-                    cleanupMonitorAfterPartialFailure(request.monitor, indexResponse)
-                    throw t
                 }
 
-                // Create external schedule for monitor execution
+                // Create external schedule and update monitor with the schedule ARN
                 if (externalSchedulerEnabled) {
                     try {
-                        createExternalSchedule(request.monitor, tenantId)
+                        val scheduleArn = createExternalSchedule(request.monitor)
+                        val updatedMetadata = (request.monitor.metadata.orEmpty()) +
+                            (ExternalSchedulerService.SCHEDULE_ARN_METADATA_KEY to scheduleArn)
+                        request.monitor = request.monitor.copy(metadata = updatedMetadata)
+                        updateMonitorMetadata(request.monitor, tenantId)
                     } catch (t: Exception) {
                         log.error("Failed to create EB schedule for monitor ${indexResponse.id}. Rolling back.", t)
                         cleanupMonitorAfterPartialFailure(request.monitor, indexResponse)
@@ -661,7 +986,6 @@ class TransportIndexMonitorAction @Inject constructor(
         }
 
         private suspend fun updateMonitor() {
-            val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
             val getRequest = GetDataObjectRequest.builder()
                 .index(SCHEDULED_JOBS_INDEX)
                 .id(request.monitorId)
@@ -739,7 +1063,6 @@ class TransportIndexMonitorAction @Inject constructor(
 
             log.info("Updating monitor, ${currentMonitor.id}")
 
-            val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
             val monitorObj = ToXContentObject { builder, params ->
                 request.monitor.toXContentWithUser(builder, ToXContent.MapParams(mapOf("with_type" to "true")))
             }
@@ -777,40 +1100,42 @@ class TransportIndexMonitorAction @Inject constructor(
                     isDocLevelMonitorRestarted = true
                 }
 
-                var updatedMetadata: MonitorMetadata
-                val (metadata, created) = MonitorMetadataService.getOrCreateMetadata(
-                    request.monitor,
-                    forceCreateLastRunContext = isDocLevelMonitorRestarted
-                )
-
-                // Recreate runContext if metadata exists
-                // Delete and insert all queries from/to queryIndex
-
-                if (!created &&
-                    currentMonitor.isMonitorOfStandardType() &&
-                    Monitor.MonitorType.valueOf(currentMonitor.monitorType.uppercase(Locale.ROOT)) == Monitor.MonitorType.DOC_LEVEL_MONITOR
-                ) {
-                    updatedMetadata = MonitorMetadataService.recreateRunContext(metadata, currentMonitor)
-                    if (docLevelMonitorQueries.docLevelQueryIndexExists(currentMonitor.dataSources)) {
-                        client.suspendUntil<Client, BulkByScrollResponse> {
-                            DeleteByQueryRequestBuilder(client, DeleteByQueryAction.INSTANCE)
-                                .source(currentMonitor.dataSources.queryIndex)
-                                .filter(QueryBuilders.matchQuery("monitor_id", currentMonitor.id))
-                                .execute(it)
-                        }
-                    }
-                    indexDocLevelMonitorQueries(
+                if (!multiTenancyEnabled) {
+                    var updatedMetadata: MonitorMetadata
+                    val (metadata, created) = MonitorMetadataService.getOrCreateMetadata(
                         request.monitor,
-                        currentMonitor.id,
-                        updatedMetadata,
-                        request.refreshPolicy
+                        forceCreateLastRunContext = isDocLevelMonitorRestarted
                     )
-                    MonitorMetadataService.upsertMetadata(updatedMetadata, updating = true)
+
+                    // Recreate runContext if metadata exists
+                    // Delete and insert all queries from/to queryIndex
+
+                    val isDocLevelMonitor = currentMonitor.isMonitorOfStandardType() &&
+                        Monitor.MonitorType.valueOf(currentMonitor.monitorType.uppercase(Locale.ROOT)) ==
+                        Monitor.MonitorType.DOC_LEVEL_MONITOR
+                    if (!created && isDocLevelMonitor) {
+                        updatedMetadata = MonitorMetadataService.recreateRunContext(metadata, currentMonitor)
+                        if (docLevelMonitorQueries.docLevelQueryIndexExists(currentMonitor.dataSources)) {
+                            client.suspendUntil<Client, BulkByScrollResponse> {
+                                DeleteByQueryRequestBuilder(client, DeleteByQueryAction.INSTANCE)
+                                    .source(currentMonitor.dataSources.queryIndex)
+                                    .filter(QueryBuilders.matchQuery("monitor_id", currentMonitor.id))
+                                    .execute(it)
+                            }
+                        }
+                        indexDocLevelMonitorQueries(
+                            request.monitor,
+                            currentMonitor.id,
+                            updatedMetadata,
+                            request.refreshPolicy
+                        )
+                        MonitorMetadataService.upsertMetadata(updatedMetadata, updating = true)
+                    }
                 }
                 // Update external schedule with latest monitor config
                 if (externalSchedulerEnabled) {
                     try {
-                        updateExternalSchedule(request.monitor, tenantId)
+                        updateExternalSchedule(request.monitor, currentMonitor, tenantId)
                     } catch (t: Exception) {
                         log.error("Failed to update EB schedule for monitor ${request.monitorId}", t)
                         actionListener.onFailure(AlertingException.wrap(t))
@@ -841,23 +1166,25 @@ class TransportIndexMonitorAction @Inject constructor(
         }
 
         /**
-         * Reads scheduler routing info from plugin settings (with optional ThreadContext
-         * override for account id) and creates an external schedule.
-         * No-op when required settings are blank.
+         * Creates an external schedule and returns the schedule ARN.
          */
-        private fun createExternalSchedule(monitor: Monitor, tenantId: String?) {
-            val routing = resolveRouting() ?: return
+        private fun createExternalSchedule(monitor: Monitor): String {
+            val routing = resolveRouting(schedulerAccountId)
             val targetInput = buildScheduleJobPayloadJson(monitor)
             ExternalSchedulerService.createSchedule(monitor, routing, targetInput)
+            return ExternalSchedulerService.buildScheduleArn(routing, monitor.id)
         }
 
         /**
-         * Reads scheduler routing info from plugin settings (with optional ThreadContext
-         * override for account id) and updates the external schedule. Always refreshes
-         * Target.Input with the latest monitor config.
+         * Reads the schedule ARN from the existing monitor's metadata to determine
+         * the target account, then updates the external schedule with the latest monitor config.
          */
-        private fun updateExternalSchedule(monitor: Monitor, tenantId: String?) {
-            val routing = resolveRouting() ?: return
+        private fun updateExternalSchedule(monitor: Monitor, currentMonitor: Monitor, tenantId: String?) {
+            val scheduleArn = currentMonitor.metadata?.get(ExternalSchedulerService.SCHEDULE_ARN_METADATA_KEY)
+            val accountIdOverride = scheduleArn?.let {
+                ExternalSchedulerService.parseScheduleArn(it).accountId
+            }
+            val routing = resolveRouting(accountIdOverride)
             val targetInput = buildScheduleJobPayloadJson(monitor)
             ExternalSchedulerService.updateSchedule(monitor, routing, targetInput)
         }
@@ -880,12 +1207,26 @@ class TransportIndexMonitorAction @Inject constructor(
             return builder.toString()
         }
 
-        private fun resolveRouting(): SchedulerRoutingResolver.Routing? = SchedulerRoutingResolver.resolve(
+        private suspend fun updateMonitorMetadata(monitor: Monitor, tenantId: String?) {
+            val monitorObj = ToXContentObject { builder, params ->
+                monitor.toXContentWithUser(builder, ToXContent.MapParams(mapOf("with_type" to "true")))
+            }
+            val putRequest = PutDataObjectRequest.builder()
+                .index(SCHEDULED_JOBS_INDEX)
+                .id(monitor.id)
+                .tenantId(tenantId)
+                .overwriteIfExists(true)
+                .dataObject(monitorObj)
+                .build()
+            sdkClient.putDataObjectAsync(putRequest).await()
+        }
+
+        private fun resolveRouting(accountIdOverride: String?): SchedulerRoutingResolver.Routing = SchedulerRoutingResolver.resolve(
             settingsAccountId = externalSchedulerAccountId,
             settingsQueueName = jobQueueName,
-            settingsRoleArn = externalSchedulerRoleArn,
-            threadContextAccountIdOverride = client.threadPool().threadContext
-                .getTransient<String>(ExternalSchedulerService.SCHEDULER_ACCOUNT_ID_KEY)
+            settingsRoleName = externalSchedulerRoleName,
+            settingsExecutionRoleName = externalSchedulerExecutionRoleName,
+            threadContextAccountIdOverride = accountIdOverride
         )
     }
 }

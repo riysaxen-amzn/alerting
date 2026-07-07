@@ -22,11 +22,13 @@ import org.opensearch.alerting.action.ExecuteMonitorRequest
 import org.opensearch.alerting.action.ExecuteMonitorResponse
 import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.alerting.util.DocLevelMonitorQueries
+import org.opensearch.alerting.util.isClusterMetricsMonitor
 import org.opensearch.alerting.util.isUnsupportedMultiTenantMonitorType
 import org.opensearch.alerting.util.use
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.inject.Inject
 import org.opensearch.common.settings.Settings
+import org.opensearch.common.util.FeatureFlags
 import org.opensearch.common.xcontent.LoggingDeprecationHandler
 import org.opensearch.common.xcontent.XContentHelper
 import org.opensearch.common.xcontent.XContentType
@@ -35,7 +37,9 @@ import org.opensearch.commons.alerting.model.Monitor
 import org.opensearch.commons.alerting.model.ScheduledJob
 import org.opensearch.commons.alerting.util.AlertingException
 import org.opensearch.commons.alerting.util.isMonitorOfStandardType
+import org.opensearch.commons.alerting.util.isPPLMonitor
 import org.opensearch.commons.authuser.User
+import org.opensearch.commons.utils.TenantContext
 import org.opensearch.core.action.ActionListener
 import org.opensearch.core.rest.RestStatus
 import org.opensearch.core.xcontent.NamedXContentRegistry
@@ -47,6 +51,7 @@ import org.opensearch.transport.TransportService
 import org.opensearch.transport.client.Client
 import java.time.Instant
 import java.util.Locale
+
 private val log = LogManager.getLogger(TransportExecuteMonitorAction::class.java)
 private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
 
@@ -62,10 +67,17 @@ class TransportExecuteMonitorAction @Inject constructor(
     private val sdkClient: SdkClient
 ) : HandledTransportAction<ExecuteMonitorRequest, ExecuteMonitorResponse> (
     ExecuteMonitorAction.NAME, transportService, actionFilters, ::ExecuteMonitorRequest
-) {
+),
+    SecureTransportAction {
     @Volatile private var indexTimeout = AlertingSettings.INDEX_TIMEOUT.get(settings)
 
+    @Volatile override var filterByEnabled = AlertingSettings.FILTER_BY_BACKEND_ROLES.get(settings)
+
     private val multiTenancyEnabled = AlertingSettings.MULTI_TENANCY_ENABLED.get(settings)
+
+    init {
+        listenFilterBySettingChange(clusterService)
+    }
 
     override fun doExecute(task: Task, execMonitorRequest: ExecuteMonitorRequest, actionListener: ActionListener<ExecuteMonitorResponse>) {
 
@@ -73,12 +85,13 @@ class TransportExecuteMonitorAction @Inject constructor(
         log.debug("User and roles string from thread context: $userStr")
         val user: User? = User.parse(userStr)
 
+        val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
         client.threadPool().threadContext.stashContext().use {
             val executeMonitor = fun(monitor: Monitor) {
                 // Launch the coroutine with the clients threadContext. This is needed to preserve authentication information
                 // stored on the threadContext set by the security plugin when using the Alerting plugin with the Security plugin.
                 // runner.launch(ElasticThreadContextElement(client.threadPool().threadContext)) {
-                runner.launch {
+                runner.launch(TenantContext(tenantId)) {
                     val (periodStart, periodEnd) = if (execMonitorRequest.requestStart != null) {
                         Pair(
                             Instant.ofEpochMilli(execMonitorRequest.requestStart.millis),
@@ -92,7 +105,13 @@ class TransportExecuteMonitorAction @Inject constructor(
                             "Executing monitor from API - id: ${monitor.id}, type: ${monitor.monitorType}, " +
                                 "periodStart: $periodStart, periodEnd: $periodEnd, dryrun: ${execMonitorRequest.dryrun}"
                         )
-                        val monitorRunResult = runner.runJob(monitor, periodStart, periodEnd, execMonitorRequest.dryrun, transportService)
+                        val monitorRunResult = runner.runJob(
+                            monitor,
+                            periodStart,
+                            periodEnd,
+                            execMonitorRequest.dryrun,
+                            transportService
+                        )
                         withContext(Dispatchers.IO) {
                             actionListener.onResponse(ExecuteMonitorResponse(monitorRunResult))
                         }
@@ -106,7 +125,6 @@ class TransportExecuteMonitorAction @Inject constructor(
             }
 
             if (execMonitorRequest.monitorId != null && execMonitorRequest.monitor == null) {
-                val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
                 val getRequest = GetDataObjectRequest.builder()
                     .index(ScheduledJob.SCHEDULED_JOBS_INDEX)
                     .id(execMonitorRequest.monitorId)
@@ -130,26 +148,7 @@ class TransportExecuteMonitorAction @Inject constructor(
                             )
                             return@whenComplete
                         }
-                        if (!getResponse.isSourceEmpty) {
-                            XContentHelper.createParser(
-                                xContentRegistry, LoggingDeprecationHandler.INSTANCE,
-                                getResponse.sourceAsBytesRef, XContentType.JSON
-                            ).use { xcp ->
-                                val monitor = ScheduledJob.parse(xcp, getResponse.id, getResponse.version) as Monitor
-                                if (multiTenancyEnabled && monitor.isUnsupportedMultiTenantMonitorType()) {
-                                    actionListener.onFailure(
-                                        AlertingException.wrap(
-                                            OpenSearchStatusException(
-                                                "${monitor.monitorType} monitors are not allowed when multi-tenancy is enabled.",
-                                                RestStatus.METHOD_NOT_ALLOWED
-                                            )
-                                        )
-                                    )
-                                    return@whenComplete
-                                }
-                                executeMonitor(monitor)
-                            }
-                        } else {
+                        if (getResponse.isSourceEmpty) {
                             actionListener.onFailure(
                                 AlertingException.wrap(
                                     OpenSearchStatusException(
@@ -158,6 +157,36 @@ class TransportExecuteMonitorAction @Inject constructor(
                                     )
                                 )
                             )
+                            return@whenComplete
+                        }
+                        XContentHelper.createParser(
+                            xContentRegistry, LoggingDeprecationHandler.INSTANCE,
+                            getResponse.sourceAsBytesRef, XContentType.JSON
+                        ).use { xcp ->
+                            val monitor = ScheduledJob.parse(xcp, getResponse.id, getResponse.version) as Monitor
+
+                            if (multiTenancyEnabled && monitor.isUnsupportedMultiTenantMonitorType()) {
+                                actionListener.onFailure(
+                                    AlertingException.wrap(
+                                        OpenSearchStatusException(
+                                            "${monitor.monitorType} monitors are not allowed when multi-tenancy is enabled.",
+                                            RestStatus.METHOD_NOT_ALLOWED
+                                        )
+                                    )
+                                )
+                                return@whenComplete
+                            }
+
+                            // RBAC check: verify calling user has permissions to this monitor
+                            if (!checkUserPermissionsWithResource(
+                                    user, monitor.user, actionListener,
+                                    "monitor", execMonitorRequest.monitorId
+                                )
+                            ) {
+                                return@whenComplete
+                            }
+
+                            executeMonitor(monitor)
                         }
                     } catch (e: Exception) {
                         log.error("Failed to get monitor ${execMonitorRequest.monitorId} for execution", e)
@@ -182,12 +211,30 @@ class TransportExecuteMonitorAction @Inject constructor(
                     return@use
                 }
 
+                // Block non-PPL monitors on pluggable dataformat domains
+                if (FeatureFlags.isEnabled(FeatureFlags.PLUGGABLE_DATAFORMAT_EXPERIMENTAL_FLAG) &&
+                    !monitor.isPPLMonitor() && !monitor.isClusterMetricsMonitor()
+                ) {
+                    actionListener.onFailure(
+                        AlertingException.wrap(
+                            OpenSearchStatusException(
+                                "Monitor execution failed. ${monitor.monitorType} type and other DSL-based monitors " +
+                                    "are not supported on this domain type. This domain supports PPL as the query language for " +
+                                    "alert monitors. It also supports cluster metrics monitors. Please create one of these monitor " +
+                                    "types instead.",
+                                RestStatus.FORBIDDEN
+                            )
+                        )
+                    )
+                    return@use
+                }
+
                 if (
                     monitor.isMonitorOfStandardType() &&
                     Monitor.MonitorType.valueOf(monitor.monitorType.uppercase(Locale.ROOT)) == Monitor.MonitorType.DOC_LEVEL_MONITOR
                 ) {
                     try {
-                        scope.launch {
+                        scope.launch(TenantContext(tenantId)) {
                             if (!docLevelMonitorQueries.docLevelQueryIndexExists(monitor.dataSources)) {
                                 docLevelMonitorQueries.initDocLevelQueryIndex(monitor.dataSources)
                                 log.info("Central Percolation index ${ScheduledJob.DOC_LEVEL_QUERIES_INDEX} created")

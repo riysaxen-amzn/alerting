@@ -156,6 +156,8 @@ dependencies {
     // Needed for integ tests
     zipArchive group: 'org.opensearch.plugin', name:'opensearch-notifications-core', version: "${opensearch_build}"
     zipArchive group: 'org.opensearch.plugin', name:'notifications', version: "${opensearch_build}"
+    zipArchive group: 'org.opensearch.plugin', name:'opensearch-job-scheduler', version: "${opensearch_build}"
+    zipArchive group: 'org.opensearch.plugin', name:'opensearch-sql-plugin', version: "${opensearch_build}"
 
     // Needed for security tests
     if (securityEnabled) {
@@ -173,21 +175,46 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-common:${kotlin_version}"
     implementation "org.jetbrains:annotations:13.0"
 
+    // SQL/PPL plugin dependencies are included in alerting-core
     api project(":alerting-core")
+    implementation 'org.json:json:20240303'
+    implementation "com.fasterxml.jackson.core:jackson-databind:${versions.jackson_databind}"
+
     implementation "com.github.seancfoley:ipaddress:5.4.1"
+    implementation "com.github.spullara.mustache.java:compiler:0.9.14"
     implementation project(path: ":alerting-spi", configuration: 'shadow')
 
     implementation "org.opensearch:opensearch-remote-metadata-sdk:${opensearch_build}"
 
-    implementation "software.amazon.awssdk:sqs:2.30.18"
-    implementation "software.amazon.awssdk:scheduler:2.30.18"
-    implementation "software.amazon.awssdk:sts:2.30.18"
-    implementation "software.amazon.awssdk:auth:2.30.18"
-    implementation "software.amazon.awssdk:identity-spi:2.30.18"
-    implementation "software.amazon.awssdk:aws-core:2.30.18"
-    implementation "software.amazon.awssdk:sdk-core:2.30.18"
-    implementation "software.amazon.awssdk:utils:2.30.18"
-    implementation "software.amazon.awssdk:regions:2.30.18"
+    implementation(platform("software.amazon.awssdk:bom:${versions.aws}"))
+    implementation "software.amazon.awssdk:sqs:${versions.aws}"
+    implementation "software.amazon.awssdk:scheduler:${versions.aws}"
+    implementation "software.amazon.awssdk:sts:${versions.aws}"
+    implementation "software.amazon.awssdk:auth:${versions.aws}"
+    implementation "software.amazon.awssdk:identity-spi:${versions.aws}"
+    implementation "software.amazon.awssdk:aws-core:${versions.aws}"
+    implementation "software.amazon.awssdk:sdk-core:${versions.aws}"
+    implementation "software.amazon.awssdk:utils:${versions.aws}"
+    implementation "software.amazon.awssdk:regions:${versions.aws}"
+    implementation "software.amazon.awssdk:arns:${versions.aws}"
+    implementation "software.amazon.awssdk:http-client-spi:${versions.aws}"
+    implementation "software.amazon.awssdk:aws-json-protocol:${versions.aws}"
+    implementation "software.amazon.awssdk:aws-query-protocol:${versions.aws}"
+    implementation "software.amazon.awssdk:third-party-jackson-core:${versions.aws}"
+    implementation "software.amazon.awssdk:protocol-core:${versions.aws}"
+    implementation "software.amazon.awssdk:json-utils:${versions.aws}"
+    implementation "software.amazon.awssdk:profiles:${versions.aws}"
+    implementation "software.amazon.awssdk:metrics-spi:${versions.aws}"
+    implementation "software.amazon.awssdk:endpoints-spi:${versions.aws}"
+    implementation "software.amazon.awssdk:http-auth-spi:${versions.aws}"
+    implementation "software.amazon.awssdk:http-auth:${versions.aws}"
+    implementation "software.amazon.awssdk:http-auth-aws:${versions.aws}"
+    implementation "software.amazon.awssdk:retries:${versions.aws}"
+    implementation "software.amazon.awssdk:retries-spi:${versions.aws}"
+    implementation "software.amazon.awssdk:checksums:${versions.aws}"
+    implementation "software.amazon.awssdk:checksums-spi:${versions.aws}"
+    implementation "software.amazon.awssdk:annotations:${versions.aws}"
+    implementation "software.amazon.awssdk:apache-client:${versions.aws}"
 
     testImplementation "org.antlr:antlr4-runtime:${versions.antlr4}"
     testImplementation "org.jetbrains.kotlin:kotlin-test:${kotlin_version}"
@@ -221,6 +248,7 @@ task integTest(type: RestIntegTestTask) {
 }
 tasks.named("check").configure { dependsOn(integTest) }
 Zip bundle = (Zip) project.getTasks().getByName("bundlePlugin");
+bundle.rename('annotations-2\\.(.+)\\.jar', 'aws-sdk-annotations-2.$1.jar')
 integTest.dependsOn(bundle)
 integTest.getClusters().forEach{c -> c.plugin(project.getObjects().fileProperty().value(bundle.getArchiveFile()))}
 
@@ -258,6 +286,28 @@ testClusters.integTest {
             File getAsFile() {
                 return configurations.zipArchive.asFileTree.matching {
                     include '**/notifications*'
+                }.singleFile
+            }
+        }
+    }))
+
+    plugin(provider({
+        new RegularFile() {
+            @Override
+            File getAsFile() {
+                return configurations.zipArchive.asFileTree.matching {
+                    include '**/opensearch-job-scheduler*'
+                }.singleFile
+            }
+        }
+    }))
+
+    plugin(provider({
+        new RegularFile() {
+            @Override
+            File getAsFile() {
+                return configurations.zipArchive.asFileTree.matching {
+                    include '**/opensearch-sql-plugin*'
                 }.singleFile
             }
         }
@@ -343,6 +393,44 @@ integTest {
             excludeTestsMatching "org.opensearch.alerting.bwc.*IT"
         }
     }
+
+    filter {
+        excludeTestsMatching "org.opensearch.alerting.transport.PluggableDataFormatMonitorBlockIT"
+    }
+}
+
+task integTestPluggableDataformat(type: RestIntegTestTask) {
+    description = "Runs integration tests with pluggable dataformat feature flag enabled"
+    dependsOn bundlePlugin
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
+    systemProperty 'tests.security.manager', 'false'
+    systemProperty 'java.io.tmpdir', opensearch_tmp_dir.absolutePath
+    systemProperty 'tests.pluggable_dataformat_enabled', 'true'
+
+    filter {
+        includeTestsMatching "org.opensearch.alerting.transport.PluggableDataFormatMonitorBlockIT"
+        failOnNoMatchingTests false
+    }
+}
+
+testClusters.integTestPluggableDataformat {
+    testDistribution = "ARCHIVE"
+    systemProperty 'opensearch.experimental.feature.pluggable.dataformat.enabled', 'true'
+
+    plugin(provider({ new RegularFile() { @Override File getAsFile() { return configurations.zipArchive.asFileTree.matching { include '**/opensearch-notifications-core*' }.singleFile } } }))
+    plugin(provider({ new RegularFile() { @Override File getAsFile() { return configurations.zipArchive.asFileTree.matching { include '**/notifications*' }.singleFile } } }))
+    plugin(provider({ new RegularFile() { @Override File getAsFile() { return configurations.zipArchive.asFileTree.matching { include '**/opensearch-job-scheduler*' }.singleFile } } }))
+    plugin(provider({ new RegularFile() { @Override File getAsFile() { return configurations.zipArchive.asFileTree.matching { include '**/opensearch-sql-plugin*' }.singleFile } } }))
+}
+
+integTestPluggableDataformat.dependsOn(bundle)
+integTestPluggableDataformat.getClusters().forEach{c -> c.plugin(project.getObjects().fileProperty().value(bundle.getArchiveFile()))}
+
+check.dependsOn integTestPluggableDataformat
+if (!usingRemoteCluster) {
+    integTest.finalizedBy integTestPluggableDataformat
 }
 
 task integTestRemote(type: RestIntegTestTask) {

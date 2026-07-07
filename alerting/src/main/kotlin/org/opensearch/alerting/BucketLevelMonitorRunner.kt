@@ -50,9 +50,6 @@ import org.opensearch.core.xcontent.ToXContent
 import org.opensearch.core.xcontent.XContentBuilder
 import org.opensearch.index.query.BoolQueryBuilder
 import org.opensearch.index.query.QueryBuilders
-import org.opensearch.script.Script
-import org.opensearch.script.ScriptType
-import org.opensearch.script.TemplateScript
 import org.opensearch.search.aggregations.AggregatorFactories
 import org.opensearch.search.aggregations.bucket.composite.CompositeAggregationBuilder
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder
@@ -84,6 +81,13 @@ object BucketLevelMonitorRunner : MonitorRunner() {
         }
 
         var monitorResult = MonitorRunResult<BucketLevelTriggerRunResult>(monitor.name, periodStart, periodEnd)
+
+        if (monitorCtx.multiTenantTriggerEvalEnabled && monitor.triggers.size > 1) {
+            val msg = "Bucket-level monitors only support 1 trigger when remote trigger evaluation is enabled."
+            logger.error(msg)
+            return monitorResult.copy(error = IllegalArgumentException(msg))
+        }
+
         val currentAlerts = try {
             monitorCtx.alertIndices!!.createOrUpdateAlertIndex(monitor.dataSources)
             monitorCtx.alertIndices!!.createOrUpdateInitialAlertHistoryIndex(monitor.dataSources)
@@ -133,16 +137,22 @@ object BucketLevelMonitorRunner : MonitorRunner() {
                     monitor.user
                 )
             ) {
+                reinjectHeaders(monitor, monitorCtx)
                 // Storing the first page of results in the case of pagination input results to prevent empty results
                 // in the final output of monitorResult which occurs when all pages have been exhausted.
                 // If it's favorable to return the last page, will need to check how to accomplish that with multiple aggregation paths
                 // with different page counts.
+                //
+                // When the flag is on, bucket-level monitors are limited to 1 trigger. The standard
+                // bucket_selector is injected directly into the query so a single search call performs
+                // both data collection and trigger evaluation — no separate per-trigger queries needed.
                 val inputResults = monitorCtx.inputService!!.collectInputResults(
                     monitor,
                     periodStart,
                     periodEnd,
                     monitorResult.inputResults,
-                    workflowRunContext
+                    workflowRunContext,
+                    useStandardBucketSelector = monitorCtx.multiTenantTriggerEvalEnabled
                 )
                 if (firstIteration) {
                     firstPageOfInputResults = inputResults
@@ -153,15 +163,17 @@ object BucketLevelMonitorRunner : MonitorRunner() {
 
             for (trigger in monitor.triggers) {
                 // The currentAlerts map is formed by iterating over the Monitor's Triggers as keys so null should not be returned here
-                val currentAlertsForTrigger = currentAlerts[trigger]!!
+                val currentAlertsForTrigger = currentAlerts[trigger] ?: mutableMapOf()
                 val triggerCtx = BucketLevelTriggerExecutionContext(
-                    monitor,
-                    trigger as BucketLevelTrigger,
-                    monitorResult,
+                    monitor, trigger as BucketLevelTrigger, monitorResult,
                     clusterSettings = monitorCtx.clusterService!!.clusterSettings
                 )
                 triggerContexts[trigger.id] = triggerCtx
-                val triggerResult = monitorCtx.triggerService!!.runBucketLevelTrigger(monitor, trigger, triggerCtx)
+                val triggerResult = if (monitorCtx.multiTenantTriggerEvalEnabled) {
+                    monitorCtx.triggerService!!.runBucketLevelTriggerFromFilteredResponse(monitor, trigger, triggerCtx)
+                } else {
+                    monitorCtx.triggerService!!.runBucketLevelTrigger(monitor, trigger, triggerCtx)
+                }
                 triggerResults[trigger.id] = triggerResult.getCombinedTriggerRunResult(triggerResults[trigger.id])
 
                 /*
@@ -477,15 +489,9 @@ object BucketLevelMonitorRunner : MonitorRunner() {
                         "period_start" to periodStart.toEpochMilli(),
                         "period_end" to periodEnd.toEpochMilli()
                     )
-                    val searchSource = monitorCtx.scriptService!!.compile(
-                        Script(
-                            ScriptType.INLINE, Script.DEFAULT_TEMPLATE_LANG,
-                            query.toString(), searchParams
-                        ),
-                        TemplateScript.CONTEXT
+                    val searchSource = monitorCtx.mustacheTemplateService!!.renderTemplate(
+                        query.toString(), searchParams
                     )
-                        .newInstance(searchParams)
-                        .execute()
                     val sr = SearchRequest(*input.indices.toTypedArray())
                     XContentType.JSON.xContent().createParser(monitorCtx.xContentRegistry, LoggingDeprecationHandler.INSTANCE, searchSource)
                         .use {

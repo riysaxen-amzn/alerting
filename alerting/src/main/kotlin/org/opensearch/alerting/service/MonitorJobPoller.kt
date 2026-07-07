@@ -12,10 +12,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.apache.logging.log4j.LogManager
+import org.opensearch.alerting.AlertingPlugin
 import org.opensearch.alerting.action.ExecuteMonitorAction
 import org.opensearch.alerting.action.ExecuteMonitorRequest
 import org.opensearch.alerting.action.ExecuteMonitorResponse
 import org.opensearch.alerting.opensearchapi.suspendUntil
+import org.opensearch.alerting.util.ArnHelper
 import org.opensearch.common.lifecycle.AbstractLifecycleComponent
 import org.opensearch.common.unit.TimeValue
 import org.opensearch.common.xcontent.LoggingDeprecationHandler
@@ -26,6 +28,7 @@ import org.opensearch.commons.alerting.util.AlertingException
 import org.opensearch.commons.utils.scheduler.JobQueueAccountIdProvider
 import org.opensearch.core.xcontent.NamedXContentRegistry
 import org.opensearch.transport.client.Client
+import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.sqs.SqsClient
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest
 import software.amazon.awssdk.services.sqs.model.Message
@@ -48,7 +51,10 @@ class MonitorJobPoller(
     private val enabled: Boolean,
     private val accountIdProvider: JobQueueAccountIdProvider?,
     private val region: String,
-    private val queueName: String
+    private val queueName: String,
+    private val targetTypeToServiceName: Map<String, String>,
+    private val tenantAccountIdHeaderName: String = "",
+    private val tenantResourceIdHeaderNames: Map<String, String> = emptyMap()
 ) : AbstractLifecycleComponent() {
 
     private val logger = LogManager.getLogger(MonitorJobPoller::class.java)
@@ -64,7 +70,13 @@ class MonitorJobPoller(
             return
         }
         val provider = requireNotNull(accountIdProvider) { "accountIdProvider must be set before starting" }
-        val sqs = requireNotNull(sqsClient) { "sqsClient must be set before starting" }
+        require(region.isNotBlank()) { "region must be set before starting" }
+        if (sqsClient == null) {
+            sqsClient = SqsClient.builder()
+                .region(Region.of(region))
+                .build()
+        }
+        val sqs = sqsClient!!
 
         logger.info("Starting MonitorJobPoller with $POLLER_THREAD_COUNT workers")
         repeat(POLLER_THREAD_COUNT) { scope.launch { pollLoop(provider, sqs, region, queueName) } }
@@ -114,6 +126,7 @@ class MonitorJobPoller(
                     val payload = parseMessage(message.body())
                     val monitor = payload.toMonitor(xContentRegistry)
                     val jobStartTime = Instant.parse(payload.jobStartTime)
+
                     logger.info(
                         "Parsed monitor [{}] type [{}] jobStartTime [{}]",
                         monitor.id, monitor.monitorType, jobStartTime
@@ -134,6 +147,7 @@ class MonitorJobPoller(
     }
 
     private suspend fun executeMonitor(monitor: Monitor, jobStartTime: Instant) {
+
         val request = ExecuteMonitorRequest(
             dryrun = false,
             requestEnd = TimeValue(jobStartTime.toEpochMilli()),
@@ -142,8 +156,11 @@ class MonitorJobPoller(
             requestStart = null
         )
         try {
-            client.suspendUntil<Client, ExecuteMonitorResponse> {
-                client.execute(ExecuteMonitorAction.INSTANCE, request, it)
+            client.threadPool().threadContext.stashContext().use {
+                populateThreadContext(monitor)
+                client.suspendUntil<Client, ExecuteMonitorResponse> {
+                    client.execute(ExecuteMonitorAction.INSTANCE, request, it)
+                }
             }
         } catch (e: Exception) {
             throw AlertingException.wrap(e)
@@ -183,5 +200,83 @@ class MonitorJobPoller(
     companion object {
         const val POLLER_THREAD_COUNT = 10
         const val POLL_INTERVAL_MS = 1000L
+
+        // thread context header keys for request interception
+        const val IS_BACKGROUND_JOB_HEADER = "is-observability-bg-job"
+        const val SERVICE_NAME_HEADER = "aws-service-name"
+        const val OPENSEARCH_ENDPOINT_HEADER = "opensearch-url"
+        const val REGION_HEADER = "aws-region"
+    }
+
+    // populates thread context with KVs that downstream interception will
+    // need when intercepting search or PPL calls to external customer
+    // data source
+    internal fun populateThreadContext(monitor: Monitor) {
+        val target = monitor.target
+        if (target == null) {
+            throw AlertingException.wrap(
+                IllegalStateException("Monitor received by Job Poller did not contain target")
+            )
+        }
+
+        if (target.type.isBlank()) {
+            throw AlertingException.wrap(
+                IllegalStateException("Monitor target received by Job Poller did not contain target type")
+            )
+        }
+
+        if (target.endpoint.isBlank()) {
+            throw AlertingException.wrap(
+                IllegalStateException("Monitor target received by Job Poller did not contain endpoint")
+            )
+        }
+
+        val threadContext = client.threadPool().threadContext
+
+        // Request interception checks for this flag to know that this is
+        // a scheduled background monitor execution, meaning there will be
+        // no user credentials to make the search/ppl call to customer
+        // data source with, and it must use service credentials
+        threadContext.putHeader(IS_BACKGROUND_JOB_HEADER, "true")
+
+        threadContext.putHeader(SERVICE_NAME_HEADER, mapTargetTypeToServiceName(target.type))
+
+        // external customer data source endpoint, to run search/ppl against
+        threadContext.putHeader(OPENSEARCH_ENDPOINT_HEADER, target.endpoint)
+
+        // populated upstream in AlertingPlugin.kt with REMOTE_METADATA_REGION.get(settings)
+        threadContext.putHeader(REGION_HEADER, region)
+
+        // Set tenant_id header from monitor metadata for downstream SDK calls
+        val tenantId = monitor.metadata?.get(AlertingPlugin.TENANT_ID_METADATA_KEY)
+        if (!tenantId.isNullOrEmpty()) {
+            threadContext.putHeader(AlertingPlugin.TENANT_ID_HEADER, tenantId)
+        }
+
+        // Set transient headers for account ID and resource ID parsed from target ARN.
+        // to route the search request to the correct remote data source.
+        if (target.arn.isNotBlank()) {
+            val (accountId, resourceId) = ArnHelper.parseArn(target.arn)
+            if (tenantAccountIdHeaderName.isNotEmpty()) {
+                threadContext.putTransient(tenantAccountIdHeaderName, accountId)
+            }
+            val resourceHeader = tenantResourceIdHeaderNames[target.type]
+            if (!resourceHeader.isNullOrEmpty()) {
+                threadContext.putTransient(resourceHeader, resourceId)
+            }
+        }
+    }
+
+    private fun mapTargetTypeToServiceName(targetType: String): String {
+        if (!targetTypeToServiceName.containsKey(targetType)) {
+            throw AlertingException.wrap(
+                IllegalStateException(
+                    "Received invalid target type in Job Poller: " + targetType +
+                        ", expected one of: " + targetTypeToServiceName.keys
+                )
+            )
+        }
+
+        return targetTypeToServiceName[targetType]!!
     }
 }

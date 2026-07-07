@@ -11,7 +11,6 @@ import org.apache.lucene.search.TotalHits.Relation
 import org.opensearch.action.ActionRequest
 import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.search.SearchResponse
-import org.opensearch.action.search.SearchResponse.Clusters
 import org.opensearch.action.search.ShardSearchFailure
 import org.opensearch.action.support.ActionFilters
 import org.opensearch.action.support.HandledTransportAction
@@ -95,26 +94,33 @@ class TransportSearchMonitorAction @Inject constructor(
             .version(true)
         addOwnerFieldIfNotExists(transformedRequest.searchRequest)
         val user = readUserFromThreadContext(client)
+        val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
         client.threadPool().threadContext.stashContext().use {
-            resolve(transformedRequest, actionListener, user)
+            resolve(transformedRequest, actionListener, user, tenantId)
         }
     }
 
-    fun resolve(searchMonitorRequest: SearchMonitorRequest, actionListener: ActionListener<SearchResponse>, user: User?) {
+    fun resolve(
+        searchMonitorRequest: SearchMonitorRequest,
+        actionListener: ActionListener<SearchResponse>,
+        user: User?,
+        tenantId: String? = null,
+    ) {
         if (user == null) {
             // user header is null when: 1/ security is disabled. 2/when user is super-admin.
-            search(searchMonitorRequest.searchRequest, actionListener)
+            search(searchMonitorRequest.searchRequest, actionListener, tenantId)
         } else if (!doFilterForUser(user)) {
             // security is enabled and filterby is disabled.
-            search(searchMonitorRequest.searchRequest, actionListener)
+            search(searchMonitorRequest.searchRequest, actionListener, tenantId)
         } else {
             // security is enabled and filterby is enabled.
             log.info("Filtering result by: ${user.backendRoles}")
             addFilter(user, searchMonitorRequest.searchRequest.source(), "monitor.user.backend_roles.keyword")
-            search(searchMonitorRequest.searchRequest, actionListener)
+            search(searchMonitorRequest.searchRequest, actionListener, tenantId)
         }
     }
 
+    // Used in Get and Search monitor functionalities to return a "no results" response
     fun getEmptySearchResponse(): SearchResponse {
         val internalSearchResponse = InternalSearchResponse(
             SearchHits(emptyArray(), TotalHits(0L, Relation.EQUAL_TO), 0.0f),
@@ -148,8 +154,7 @@ class TransportSearchMonitorAction @Inject constructor(
         return false
     }
 
-    fun search(searchRequest: SearchRequest, actionListener: ActionListener<SearchResponse>) {
-        val tenantId = client.threadPool().threadContext.getHeader(AlertingPlugin.TENANT_ID_HEADER)
+    fun search(searchRequest: SearchRequest, actionListener: ActionListener<SearchResponse>, tenantId: String? = null) {
         val sdkSearchRequest = SearchDataObjectRequest.builder()
             .indices(*searchRequest.indices())
             .tenantId(tenantId)

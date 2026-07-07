@@ -35,11 +35,14 @@ import org.opensearch.commons.alerting.model.ClusterMetricsTriggerRunResult
 import org.opensearch.commons.alerting.model.DataSources
 import org.opensearch.commons.alerting.model.Monitor
 import org.opensearch.commons.alerting.model.NoOpTrigger
+import org.opensearch.commons.alerting.model.PPLInput
 import org.opensearch.commons.alerting.model.QueryLevelTriggerRunResult
 import org.opensearch.commons.alerting.model.Trigger
 import org.opensearch.commons.alerting.model.Workflow
 import org.opensearch.commons.alerting.model.WorkflowRunContext
 import org.opensearch.commons.alerting.model.action.AlertCategory
+import org.opensearch.commons.alerting.util.isPPLMonitor
+import org.opensearch.commons.utils.currentTenantId
 import org.opensearch.core.action.ActionListener
 import org.opensearch.core.common.bytes.BytesReference
 import org.opensearch.core.rest.RestStatus
@@ -65,6 +68,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
+
 /** Service that handles CRUD operations for alerts */
 class AlertService(
     val client: Client,
@@ -103,6 +107,11 @@ class AlertService(
     }
 
     suspend fun loadCurrentAlertsForQueryLevelMonitor(monitor: Monitor, workflowRunContext: WorkflowRunContext?): Map<Trigger, Alert?> {
+        // Return early for dry-run
+        if (monitor.id.isBlank()) {
+            return monitor.triggers.associateWith { null }
+        }
+
         val searchAlertsResponse: SearchResponse = searchAlerts(
             monitor = monitor,
             size = monitor.triggers.size * 2, // We expect there to be only a single in-progress alert so fetch 2 to check
@@ -126,6 +135,11 @@ class AlertService(
         monitor: Monitor,
         workflowRunContext: WorkflowRunContext?,
     ): Map<Trigger, MutableMap<String, Alert>> {
+        // Return early for dry-run
+        if (monitor.id.isBlank()) {
+            return monitor.triggers.associateWith { mutableMapOf() }
+        }
+
         val searchAlertsResponse: SearchResponse = searchAlerts(
             monitor = monitor,
             // TODO: This should be limited based on a circuit breaker that limits Alerts
@@ -201,6 +215,13 @@ class AlertService(
                 }
             }
 
+        // these fields are only populated for PPL Monitors for now.
+        // this can be extended to let DSL-based Monitors like Query
+        // or Bucket level Monitors include their results in Alerts
+        // as well
+        val query = if (ctx.monitor.isPPLMonitor()) (ctx.monitor.inputs[0] as PPLInput).query else null
+        val queryResults = if (ctx.monitor.isPPLMonitor()) ctx.pplQueryResults else emptyList()
+
         // Merge the alert's error message to the current alert's history
         val updatedHistory = currentAlert?.errorHistory.update(alertError)
         return if (alertError == null && !result.triggered) {
@@ -211,7 +232,9 @@ class AlertService(
                 errorHistory = updatedHistory,
                 actionExecutionResults = updatedActionExecutionResults,
                 schemaVersion = IndexUtils.alertIndexSchemaVersion,
-                clusters = triggeredClusters
+                clusters = triggeredClusters,
+                query = query,
+                queryResults = queryResults
             )
         } else if (alertError == null && currentAlert?.isAcknowledged() == true) {
             null
@@ -224,7 +247,9 @@ class AlertService(
                 errorHistory = updatedHistory,
                 actionExecutionResults = updatedActionExecutionResults,
                 schemaVersion = IndexUtils.alertIndexSchemaVersion,
-                clusters = triggeredClusters
+                clusters = triggeredClusters,
+                query = query,
+                queryResults = queryResults
             )
         } else {
             val alertState = if (workflorwRunContext?.auditDelegateMonitorAlerts == true) {
@@ -237,7 +262,7 @@ class AlertService(
                 errorHistory = updatedHistory, actionExecutionResults = updatedActionExecutionResults,
                 schemaVersion = IndexUtils.alertIndexSchemaVersion, executionId = executionId,
                 workflowId = workflorwRunContext?.workflowId ?: "",
-                clusters = triggeredClusters
+                clusters = triggeredClusters, query = query, queryResults = queryResults
             )
         }
     }
@@ -481,6 +506,7 @@ class AlertService(
 
         val searchRequest = SearchDataObjectRequest.builder()
             .indices(monitor.dataSources.alertsIndex)
+            .tenantId(currentTenantId())
             .routing(monitor.id)
             .searchSourceBuilder(
                 SearchSourceBuilder()
@@ -527,6 +553,7 @@ class AlertService(
             .index(monitor.dataSources.alertsIndex)
             .id(alert.id)
             .routing(alert.monitorId)
+            .tenantId(currentTenantId())
             .overwriteIfExists(true)
             .dataObject(ToXContentObject { builder, _ -> alert.toXContentWithUser(builder) })
             .build()
@@ -544,6 +571,7 @@ class AlertService(
         try {
             val searchRequest = SearchDataObjectRequest.builder()
                 .indices(monitor.dataSources.alertsIndex)
+                .tenantId(currentTenantId())
                 .routing(monitor.id)
                 .searchSourceBuilder(
                     SearchSourceBuilder()
@@ -577,6 +605,7 @@ class AlertService(
                         .index(monitor.dataSources.alertsIndex)
                         .id(updatedAlert.id)
                         .routing(monitor.id)
+                        .tenantId(currentTenantId())
                         .overwriteIfExists(true)
                         .dataObject(ToXContentObject { builder, _ -> updatedAlert.toXContentWithUser(builder) })
                         .build()
@@ -604,6 +633,7 @@ class AlertService(
         try {
             val searchRequest = SearchDataObjectRequest.builder()
                 .indices(alertIndex)
+                .tenantId(currentTenantId())
                 .routing(monitorId)
                 .searchSourceBuilder(
                     SearchSourceBuilder()
@@ -635,6 +665,7 @@ class AlertService(
                         .index(alertHistoryIndex)
                         .id(hit.id)
                         .routing(alert.monitorId)
+                        .tenantId(currentTenantId())
                         .overwriteIfExists(true)
                         .dataObject(ToXContentObject { builder, _ -> alert.toXContentWithUser(builder) })
                         .build()
@@ -697,6 +728,7 @@ class AlertService(
                             .index(alertsIndex)
                             .id(if (alert.id != Alert.NO_ID) alert.id else null)
                             .routing(routingId)
+                            .tenantId(currentTenantId())
                             .overwriteIfExists(true)
                             .dataObject(ToXContentObject { builder, _ -> alert.toXContentWithUser(builder) })
                             .build()
@@ -709,6 +741,7 @@ class AlertService(
                                 .index(alertsIndex)
                                 .id(if (alert.id != Alert.NO_ID) alert.id else null)
                                 .routing(routingId)
+                                .tenantId(currentTenantId())
                                 .overwriteIfExists(true)
                                 .dataObject(ToXContentObject { builder, _ -> alert.toXContentWithUser(builder) })
                                 .build()
@@ -726,6 +759,7 @@ class AlertService(
                             .index(index)
                             .id(if (alert.id != Alert.NO_ID) alert.id else null)
                             .routing(routingId)
+                            .tenantId(currentTenantId())
                             .overwriteIfExists(true)
                             .dataObject(ToXContentObject { builder, _ -> alert.toXContentWithUser(builder) })
                             .build()
@@ -740,6 +774,7 @@ class AlertService(
                             .index(alertsIndex)
                             .id(alert.id)
                             .routing(routingId)
+                            .tenantId(currentTenantId())
                             .build()
                     )
                     if (alertIndices.isAlertHistoryEnabled()) {
@@ -748,6 +783,7 @@ class AlertService(
                                 .index(alertsHistoryIndex)
                                 .id(alert.id)
                                 .routing(routingId)
+                                .tenantId(currentTenantId())
                                 .overwriteIfExists(true)
                                 .dataObject(ToXContentObject { builder, _ -> alert.toXContentWithUser(builder) })
                                 .build()
@@ -803,6 +839,7 @@ class AlertService(
             PutDataObjectRequest.builder()
                 .index(alertIndex)
                 .routing(alert.monitorId)
+                .tenantId(currentTenantId())
                 .overwriteIfExists(false)
                 .dataObject(ToXContentObject { builder, _ -> alert.toXContentWithUser(builder) })
                 .build()
@@ -825,6 +862,7 @@ class AlertService(
                             PutDataObjectRequest.builder()
                                 .index(requestsToRetry.getOrNull(index)?.index() ?: dataSources.alertsIndex)
                                 .routing(alertsBeingIndexed[index].monitorId)
+                                .tenantId(currentTenantId())
                                 .overwriteIfExists(false)
                                 .dataObject(
                                     ToXContentObject { builder, _ -> alertsBeingIndexed[index].toXContentWithUser(builder) }
@@ -879,6 +917,7 @@ class AlertService(
 
         val searchRequest = SearchDataObjectRequest.builder()
             .indices(alertIndex)
+            .tenantId(currentTenantId())
             .routing(monitorId)
             .searchSourceBuilder(searchSourceBuilder)
             .build()
@@ -914,6 +953,7 @@ class AlertService(
 
         val searchRequest = SearchDataObjectRequest.builder()
             .indices(alertIndex)
+            .tenantId(currentTenantId())
             .routing(workflowId)
             .searchSourceBuilder(searchSourceBuilder)
             .build()

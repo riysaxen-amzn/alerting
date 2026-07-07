@@ -309,6 +309,58 @@ class AlertingSettings {
             Setting.Property.NodeScope, Setting.Property.Dynamic
         )
 
+        val MAX_PPL_TRIGGERS_PER_MONITOR = Setting.intSetting(
+            "plugins.alerting.monitor.max_ppl_triggers",
+            10,
+            0,
+            10,
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        val PPL_QUERY_EXECUTION_MAX_DURATION = Setting.positiveTimeSetting(
+            "plugins.alerting.ppl_query_max_execution_duration",
+            TimeValue(30, TimeUnit.SECONDS),
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        val PPL_MAX_QUERY_LENGTH = Setting.longSetting(
+            "plugins.alerting.ppl_monitor_max_query_length",
+            2000L,
+            0L,
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        // max data rows to retrieve when executing PPL query against
+        // SQL/PPL plugin during monitor execution
+        val PPL_QUERY_RESULTS_MAX_DATAROWS = Setting.longSetting(
+            "plugins.alerting.ppl_query_results_max_datarows",
+            10000L,
+            1L,
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        // max size of query results to store in alerts and notifications
+        val PPL_QUERY_RESULTS_MAX_SIZE = Setting.longSetting(
+            "plugins.alerting.ppl_query_results_max_size",
+            3000L,
+            0L,
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        val NOTIFICATION_SUBJECT_SOURCE_MAX_LENGTH = Setting.intSetting(
+            "plugins.alerting.notification_subject_source_max_length",
+            1000,
+            100,
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        val NOTIFICATION_MESSAGE_SOURCE_MAX_LENGTH = Setting.intSetting(
+            "plugins.alerting.notification_message_source_max_length",
+            3000,
+            1000,
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
         val NOTIFICATION_CONTEXT_RESULTS_ALLOWED_ROLES: Setting<List<String>> = Setting.listSetting(
             "plugins.alerting.notification_context_results_allowed_roles",
             listOf(),
@@ -374,9 +426,15 @@ class AlertingSettings {
             Setting.Property.NodeScope, Setting.Property.Dynamic
         )
 
-        /** IAM role ARN that EventBridge assumes to send messages to the target SQS queue. */
-        val EXTERNAL_SCHEDULER_ROLE_ARN = Setting.simpleString(
-            "plugins.alerting.external_scheduler.role_arn",
+        /** IAM role name that EventBridge assumes to send messages to the target SQS queue. The full ARN is constructed from the account ID. */
+        val EXTERNAL_SCHEDULER_ROLE_NAME = Setting.simpleString(
+            "plugins.alerting.external_scheduler.role_name",
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        /** IAM role name that EventBridge Scheduler assumes at fire time (Target.roleArn). The full ARN is constructed from the account ID. */
+        val EXTERNAL_SCHEDULER_EXECUTION_ROLE_NAME = Setting.simpleString(
+            "plugins.alerting.external_scheduler.execution_role_name",
             Setting.Property.NodeScope, Setting.Property.Dynamic
         )
 
@@ -402,6 +460,27 @@ class AlertingSettings {
         /** Key name in monitor metadata whose value is used as the SQS MessageGroupId for fair queuing. */
         val JOB_QUEUE_MESSAGE_GROUP_KEY_NAME = Setting.simpleString(
             "plugins.alerting.external_scheduler.job_queue_message_group_key_name",
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        /** Mappings from Monitor target type to opensearch service name, used in MonitorJobPoller
+         * to populate thread context with required Monitor target information */
+        val TARGET_TYPE_TO_SERVICE_NAME = Setting.groupSetting(
+            "plugins.alerting.monitor.target_type_to_service_name.",
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        /** Header name used to propagate the account ID parsed from the monitor target ARN
+         * into the thread context as a transient header. */
+        val TENANT_ACCOUNT_ID_HEADER = Setting.simpleString(
+            "plugins.alerting.tenant.account_id_header",
+            Setting.Property.NodeScope, Setting.Property.Dynamic
+        )
+
+        /** Mappings from Monitor target type to the header name used to propagate the resource ID
+         * (collection ID or domain name) parsed from the monitor target ARN. */
+        val TENANT_RESOURCE_ID_HEADER = Setting.groupSetting(
+            "plugins.alerting.tenant.resource_id_header.",
             Setting.Property.NodeScope, Setting.Property.Dynamic
         )
     }

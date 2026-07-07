@@ -5,13 +5,22 @@
 
 package org.opensearch.alerting
 
+import kotlinx.coroutines.withTimeout
 import org.apache.logging.log4j.LogManager
+import org.opensearch.alerting.PPLUtils.appendCustomCondition
+import org.opensearch.alerting.PPLUtils.appendDataRowsLimit
+import org.opensearch.alerting.PPLUtils.capAndReformatPPLQueryResults
+import org.opensearch.alerting.PPLUtils.executePplQuery
 import org.opensearch.alerting.chainedAlertCondition.parsers.ChainedAlertExpressionParser
+import org.opensearch.alerting.opensearchapi.InjectorContextElement
+import org.opensearch.alerting.opensearchapi.withClosableContext
 import org.opensearch.alerting.script.BucketLevelTriggerExecutionContext
 import org.opensearch.alerting.script.ChainedAlertTriggerExecutionContext
 import org.opensearch.alerting.script.QueryLevelTriggerExecutionContext
 import org.opensearch.alerting.script.TriggerScript
+import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.alerting.triggercondition.parsers.TriggerExpressionParser
+import org.opensearch.alerting.util.BucketKeyFilter
 import org.opensearch.alerting.util.CrossClusterMonitorUtils
 import org.opensearch.alerting.util.getBucketKeysHash
 import org.opensearch.cluster.service.ClusterService
@@ -29,6 +38,8 @@ import org.opensearch.commons.alerting.model.DocLevelQuery
 import org.opensearch.commons.alerting.model.DocumentLevelTrigger
 import org.opensearch.commons.alerting.model.DocumentLevelTriggerRunResult
 import org.opensearch.commons.alerting.model.Monitor
+import org.opensearch.commons.alerting.model.PPLTrigger
+import org.opensearch.commons.alerting.model.PPLTrigger.NumResultsCondition
 import org.opensearch.commons.alerting.model.QueryLevelTrigger
 import org.opensearch.commons.alerting.model.QueryLevelTriggerRunResult
 import org.opensearch.commons.alerting.model.Workflow
@@ -38,6 +49,8 @@ import org.opensearch.script.ScriptService
 import org.opensearch.search.aggregations.Aggregation
 import org.opensearch.search.aggregations.Aggregations
 import org.opensearch.search.aggregations.support.AggregationPath
+import org.opensearch.transport.client.node.NodeClient
+import kotlin.time.measureTimedValue
 
 /** Service that handles executing Triggers */
 class TriggerService(val scriptService: ScriptService) {
@@ -181,6 +194,41 @@ class TriggerService(val scriptService: ScriptService) {
         }
     }
 
+    fun runBucketLevelTriggerFromFilteredResponse(
+        monitor: Monitor,
+        trigger: BucketLevelTrigger,
+        ctx: BucketLevelTriggerExecutionContext
+    ): BucketLevelTriggerRunResult {
+        return try {
+            val parentBucketPath = trigger.bucketSelector.parentBucketPath
+            val aggregationPath = AggregationPath.parse(parentBucketPath)
+            val aggs = ctx.results[0][Aggregations.AGGREGATIONS_FIELD]
+            require(aggs is Map<*, *>) { "Unexpected aggregations type: ${aggs?.javaClass}" }
+            var parentAgg: Map<*, *> = aggs
+            aggregationPath.pathElementsAsStringList.forEach { subAgg ->
+                val child = parentAgg[subAgg] ?: parentAgg.entries.firstOrNull { it.key.toString().endsWith(subAgg) }?.value
+                require(child is Map<*, *>) { "Unexpected type for agg '$subAgg': ${child?.javaClass}" }
+                parentAgg = child
+            }
+            val buckets = parentAgg[Aggregation.CommonFields.BUCKETS.preferredName]
+            require(buckets is List<*>) { "Unexpected buckets type: ${buckets?.javaClass}" }
+            val selectedBuckets = mutableMapOf<String, AggregationResultBucket>()
+            for (bucket in buckets) {
+                require(bucket is Map<*, *>) { "Unexpected bucket type: ${bucket?.javaClass}" }
+                @Suppress("UNCHECKED_CAST")
+                val bucketDict = bucket as Map<String, Any>
+                val bucketKeyValuesList = getBucketKeyValuesList(bucketDict)
+                val aggResultBucket = AggregationResultBucket(parentBucketPath, bucketKeyValuesList, bucketDict)
+                selectedBuckets[aggResultBucket.getBucketKeysHash()] = aggResultBucket
+            }
+            val filteredBuckets = BucketKeyFilter.filterBuckets(selectedBuckets, trigger.bucketSelector.filter)
+            BucketLevelTriggerRunResult(trigger.name, null, filteredBuckets)
+        } catch (e: Exception) {
+            logger.info("Error running trigger [${trigger.id}] for monitor [${monitor.id}]", e)
+            BucketLevelTriggerRunResult(trigger.name, e, emptyMap())
+        }
+    }
+
     @Suppress("UNCHECKED_CAST")
     fun runBucketLevelTrigger(
         monitor: Monitor,
@@ -234,5 +282,154 @@ class TriggerService(val scriptService: ScriptService) {
         }
 
         return keyValuesList
+    }
+
+    fun runPplNumResultsTrigger(
+        pplTrigger: PPLTrigger,
+        numResults: Long?
+    ): QueryLevelTriggerRunResult {
+
+        if (numResults == null) {
+            return QueryLevelTriggerRunResult(
+                pplTrigger.name,
+                true,
+                IllegalStateException("Did not receive a number of results from PPL query execution: ${pplTrigger.id}")
+            )
+        }
+
+        if (pplTrigger.numResultsCondition == null) {
+            return QueryLevelTriggerRunResult(
+                pplTrigger.name,
+                true,
+                IllegalStateException("No number of results condition found for trigger: ${pplTrigger.id}")
+            )
+        }
+
+        if (pplTrigger.numResultsValue == null) {
+            return QueryLevelTriggerRunResult(
+                pplTrigger.name,
+                true,
+                IllegalStateException("No number of results value found for trigger: ${pplTrigger.id}")
+            )
+        }
+
+        val numResultsCondition = pplTrigger.numResultsCondition!!
+        val numResultsValue = pplTrigger.numResultsValue!!
+
+        val triggered = when (numResultsCondition) {
+            NumResultsCondition.GREATER_THAN -> numResults > numResultsValue
+            NumResultsCondition.GREATER_THAN_EQUAL -> numResults >= numResultsValue
+            NumResultsCondition.LESS_THAN -> numResults < numResultsValue
+            NumResultsCondition.LESS_THAN_EQUAL -> numResults <= numResultsValue
+            NumResultsCondition.EQUAL -> numResults == numResultsValue
+            NumResultsCondition.NOT_EQUAL -> numResults != numResultsValue
+        }
+
+        logger.debug("Number of Results PPLTrigger ${pplTrigger.name} with ID ${pplTrigger.id} triggered: $triggered")
+
+        // unlike evaluating custom conditions, where we must include the query results because
+        // a custom condition executes its own PPL query, number of results trigger evaluation
+        // doesn't need to include query results because they're evaluated purely on the size
+        // of the results. the results themselves are already held in QueryLevelMonitorRunner.kt
+        // (the caller of this function), so passing the results here only to return them again
+        // inside the QueryLevelTriggerRunResult would be redundant
+        return QueryLevelTriggerRunResult(pplTrigger.name, triggered, null)
+    }
+
+    suspend fun runPplCustomTrigger(
+        pplMonitor: Monitor,
+        pplTrigger: PPLTrigger,
+        query: String,
+        monitorCtx: MonitorRunnerExecutionContext
+    ): QueryLevelTriggerRunResult {
+
+        if (pplTrigger.customCondition == null) {
+            return QueryLevelTriggerRunResult(
+                pplTrigger.name,
+                true,
+                IllegalStateException("No custom condition found for trigger: ${pplTrigger.id}")
+            )
+        }
+
+        val pplTriggerExecutionDuration = monitorCtx
+            .clusterService!!
+            .clusterSettings
+            .get(AlertingSettings.PPL_QUERY_EXECUTION_MAX_DURATION)
+        val queryResultsSizeLimit = monitorCtx
+            .clusterService!!
+            .clusterSettings
+            .get(AlertingSettings.PPL_QUERY_RESULTS_MAX_SIZE)
+
+        var triggered: Boolean? = null
+        var customConditionQueryResults: List<Map<String, Any?>>? = null
+
+        try {
+            withTimeout(pplTriggerExecutionDuration.millis) {
+                logger.debug("checking if custom condition is used and appending to base query")
+
+                val customCondition = pplTrigger.customCondition!!
+
+                // append the custom condition to query
+                val queryToExecute = appendCustomCondition(query, customCondition)
+
+                // limit the number of PPL query result data rows returned
+                val dataRowsLimit = monitorCtx.clusterService!!.clusterSettings.get(AlertingSettings.PPL_QUERY_RESULTS_MAX_DATAROWS)
+                val limitedQueryToExecute = appendDataRowsLimit(queryToExecute, dataRowsLimit)
+
+                // TODO: after getting ppl query results, see if the number of results
+                // retrieved equals the max allowed number of query results. this implies
+                // query results might have been excluded, in which case a warning message
+                // in the alert and notification must be added that results were excluded
+                // and an alert that should have been generated might not have been
+
+                logger.debug("executing the PPL query of monitor: ${pplMonitor.id} with custom condition: $customCondition")
+                // execute the PPL query
+                val (queryResponseJson, timeTaken) = measureTimedValue {
+                    withClosableContext(
+                        InjectorContextElement(
+                            pplMonitor.id,
+                            monitorCtx.settings!!,
+                            monitorCtx.threadPool!!.threadContext,
+                            pplMonitor.user?.roles,
+                            pplMonitor.user
+                        )
+                    ) {
+                        executePplQuery(
+                            limitedQueryToExecute,
+                            false,
+                            monitorCtx.client!! as NodeClient
+                        )
+                    }
+                }
+                logger.debug("query results for trigger ${pplTrigger.id}: $queryResponseJson")
+                logger.debug("time taken to execute query against sql/ppl plugin: $timeTaken")
+
+                // the custom condition query returns all buckets that met the custom condition,
+                // so if there are any results at all, the custom condition was met for at least one bukcet,
+                // this trigger has triggered.
+                triggered = queryResponseJson.get("total").asLong() > 0
+
+                // cap and reformat the results to be included in trigger run result
+                customConditionQueryResults = capAndReformatPPLQueryResults(queryResponseJson, queryResultsSizeLimit)
+
+                logger.debug("Custom PPLTrigger ${pplTrigger.name} with ID ${pplTrigger.id} triggered: $triggered")
+            }
+
+            return QueryLevelTriggerRunResult(
+                pplTrigger.name,
+                triggered!!,
+                null,
+                mutableMapOf(),
+                customConditionQueryResults!!
+            )
+        } catch (e: Exception) {
+            logger.error(
+                "failed to run PPL Custom Trigger ${pplTrigger.name} (id: ${pplTrigger.id} " +
+                    "from PPL Monitor ${pplMonitor.name} (id: ${pplMonitor.id}",
+                e
+            )
+
+            return QueryLevelTriggerRunResult(pplTrigger.name, true, e)
+        }
     }
 }
